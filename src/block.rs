@@ -8,7 +8,7 @@ use crate::align::{
     Axis, Bottom, HorizontalAlignment, Left, LeftRight, Right, Top, TopBottom, VerticalAlignment,
 };
 use crate::content::{Congruent, Content, ContentSlice as _, Grapheme, Layer, Style, Styled};
-use crate::{IntegerExt as _, Render};
+use crate::Render;
 
 pub trait Fill<C, T>
 where
@@ -78,6 +78,10 @@ where
     type Output = Result<ContentBlock<C>, Self>;
 
     fn fill(self, content: C) -> Self::Output {
+        fn div_ceiling(a: usize, b: usize) -> usize {
+            (0..a).step_by(b).len()
+        }
+
         if self.height == 0 {
             Err(self)
         } else {
@@ -96,7 +100,7 @@ where
             }
             for line in lines.iter_mut() {
                 if line.width() < self.width {
-                    let n = self.width.div_ceiling(line.width());
+                    let n = div_ceiling(self.width, line.width());
                     *line = line.clone().repeat(n);
                 }
                 *line = line.clone().truncate(self.width);
@@ -155,7 +159,7 @@ where
                 .lines
                 .into_iter()
                 .map(|line| {
-                    let n = width.sub_or_zero(line.width());
+                    let n = width.saturating_sub(line.width());
                     if n > 0 {
                         Content::concatenate(line, C::grapheme(Grapheme::SPACE).repeat(n))
                     } else {
@@ -172,7 +176,7 @@ where
     C: Content,
 {
     pub fn pad_to_width_at_right(self, width: usize) -> Self {
-        let n = width.sub_or_zero(self.width());
+        let n = width.saturating_sub(self.width());
         if n > 0 {
             // TODO: Calling `fill` here destroys information if the height is
             //       zero and width is non-zero!
@@ -186,7 +190,7 @@ where
     }
 
     pub fn pad_to_height_at_bottom(self, height: usize) -> Self {
-        let n = height.sub_or_zero(self.height());
+        let n = height.saturating_sub(self.height());
         if n > 0 {
             let padding = EmptyBlock::new(self.width(), n)
                 .fill(Grapheme::SPACE)
@@ -650,12 +654,12 @@ where
     }
 
     pub fn pad_to_width_at_left(self, width: usize) -> Self {
-        let width = width.sub_or_zero(self.width());
+        let width = width.saturating_sub(self.width());
         self.pad_at_left(width)
     }
 
     pub fn pad_to_height_at_top(self, height: usize) -> Self {
-        let height = height.sub_or_zero(self.height());
+        let height = height.saturating_sub(self.height());
         self.pad_at_top(height)
     }
 
