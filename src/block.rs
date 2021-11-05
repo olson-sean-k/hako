@@ -83,7 +83,8 @@ where
 
         if self.height == 0 {
             Err(self)
-        } else {
+        }
+        else {
             let mut lines = content.into_lines();
             let n = lines.len();
             if n < self.height {
@@ -118,7 +119,8 @@ where
     fn fill(self, glyph: Grapheme<'t>) -> Self::Output {
         if self.height == 0 {
             Err(self)
-        } else {
+        }
+        else {
             Ok(ContentBlock {
                 lines: vec![C::grapheme(glyph).repeat(self.width); self.height],
             })
@@ -161,7 +163,8 @@ where
                     let n = width.saturating_sub(line.width());
                     if n > 0 {
                         Content::concatenate(line, C::grapheme(Grapheme::SPACE).repeat(n))
-                    } else {
+                    }
+                    else {
                         line
                     }
                 })
@@ -175,27 +178,29 @@ where
     C: Content,
 {
     pub fn pad_to_width_at_right(self, width: usize) -> Self {
-        let n = width.saturating_sub(self.width());
-        if n > 0 {
+        let width = width.saturating_sub(self.width());
+        if width > 0 {
             // TODO: Calling `fill` here destroys information if the height is
             //       zero and width is non-zero!
-            let padding = EmptyBlock::new(n, self.height())
+            let padding = EmptyBlock::new(width, self.height())
                 .fill(Grapheme::SPACE)
                 .unwrap();
             self.join_left_to_right_at_top(padding)
-        } else {
+        }
+        else {
             self
         }
     }
 
     pub fn pad_to_height_at_bottom(self, height: usize) -> Self {
-        let n = height.saturating_sub(self.height());
-        if n > 0 {
-            let padding = EmptyBlock::new(self.width(), n)
+        let height = height.saturating_sub(self.height());
+        if height > 0 {
+            let padding = EmptyBlock::new(self.width(), height)
                 .fill(Grapheme::SPACE)
                 .unwrap();
             self.join_top_to_bottom_at_left(padding)
-        } else {
+        }
+        else {
             self
         }
     }
@@ -242,7 +247,8 @@ where
                     |front, _| {
                         if front == Grapheme::SPACE {
                             Layer::Back(())
-                        } else {
+                        }
+                        else {
                             Layer::Front(())
                         }
                     },
@@ -354,7 +360,8 @@ where
             (ModalBlock::Empty(left), ModalBlock::Content(right)) => {
                 if left.width == 0 {
                     right
-                } else {
+                }
+                else {
                     // Pad eagerly to expand the height of the empty block
                     // beyond zero.
                     let height = cmp::max(left.height, right.height());
@@ -371,7 +378,8 @@ where
             (ModalBlock::Content(left), ModalBlock::Empty(right)) => {
                 if right.width == 0 {
                     left
-                } else {
+                }
+                else {
                     // Pad eagerly to expand the height of the empty block
                     // beyond zero.
                     let height = cmp::max(left.height(), right.height);
@@ -397,7 +405,8 @@ where
             (ModalBlock::Empty(top), ModalBlock::Content(bottom)) => {
                 if top.height == 0 {
                     bottom
-                } else {
+                }
+                else {
                     // Pad eagerly to expand the width of the empty block beyond
                     // zero.
                     let width = cmp::max(top.width, bottom.width());
@@ -414,7 +423,8 @@ where
             (ModalBlock::Content(top), ModalBlock::Empty(bottom)) => {
                 if bottom.height == 0 {
                     top
-                } else {
+                }
+                else {
                     // Pad eagerly to expand the width of the empty block beyond
                     // zero.
                     let width = cmp::max(top.width(), bottom.width);

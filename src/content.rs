@@ -62,7 +62,8 @@ impl<'t> TryFrom<&'t str> for Grapheme<'t> {
     fn try_from(text: &'t str) -> Result<Self, Self::Error> {
         if text.graphemes(true).take(2).count() == 1 {
             Ok(Grapheme(text.into()))
-        } else {
+        }
+        else {
             Err(())
         }
     }
@@ -361,7 +362,8 @@ where
                 .coalesce(|(i, previous), (j, next)| {
                     if i == j {
                         Ok((0, (previous.0, Content::concatenate(previous.1, next.1))))
-                    } else {
+                    }
+                    else {
                         Err(((i, previous), (j, next)))
                     }
                 })
