@@ -1,4 +1,3 @@
-use itertools::Itertools as _;
 use std::borrow::Cow;
 use std::cmp;
 use std::marker::PhantomData;
@@ -755,8 +754,11 @@ where
             ModalBlock::Content(ref block) => block
                 .lines
                 .iter()
-                .map(|content| content.render())
-                .join("\n")
+                .fold(String::new(), |mut output, content| {
+                    output.push_str(content.render().trim_end());
+                    output.push('\n');
+                    output
+                })
                 .into(),
         }
     }
