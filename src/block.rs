@@ -30,6 +30,7 @@ impl EmptyBlock {
     }
 }
 
+/// Fundamental operations.
 impl EmptyBlock {
     pub fn pad_to_width_at_right(self, width: usize) -> Self {
         EmptyBlock {
@@ -173,6 +174,7 @@ where
     }
 }
 
+/// Fundamental operations.
 impl<C> ContentBlock<C>
 where
     C: Content,
@@ -180,12 +182,18 @@ where
     pub fn pad_to_width_at_right(self, width: usize) -> Self {
         let width = width.saturating_sub(self.width());
         if width > 0 {
-            // TODO: Calling `fill` here destroys information if the height is
-            //       zero and width is non-zero!
-            let padding = EmptyBlock::new(width, self.height())
-                .fill(Grapheme::SPACE)
-                .unwrap();
-            self.join_left_to_right_at_top(padding)
+            ContentBlock {
+                lines: self
+                    .lines
+                    .into_iter()
+                    .map(|line| {
+                        // This assumes that lines are properly padded such that
+                        // they have equal width (and so no per-line width must
+                        // be computed).
+                        Content::concatenate(line, C::space().repeat(width))
+                    })
+                    .collect(),
+            }
         }
         else {
             self
@@ -195,6 +203,7 @@ where
     pub fn pad_to_height_at_bottom(self, height: usize) -> Self {
         let height = height.saturating_sub(self.height());
         if height > 0 {
+            // Because `height` is greater than zero, the fill cannot fail.
             let padding = EmptyBlock::new(self.width(), height)
                 .fill(Grapheme::SPACE)
                 .unwrap();
@@ -331,6 +340,7 @@ where
 
 // TODO: Generalize and share code for joins and overlays.
 // TODO: Only pre-pad the heights of empty blocks to allow filling.
+/// Fundamental operations.
 impl<C> ModalBlock<C>
 where
     C: Content,
@@ -452,7 +462,7 @@ where
                 let back = back
                     .pad_to_width_at_right(width)
                     .pad_to_height_at_bottom(height);
-                // The height of the empty black cannot be zero here, so the
+                // The height of the empty block cannot be zero here, so the
                 // fill cannot fail.
                 front.fill(Grapheme::SPACE).unwrap().overlay(back).into()
             }
@@ -465,7 +475,7 @@ where
                 let back = back
                     .pad_to_width_at_right(width)
                     .pad_to_height_at_bottom(height);
-                // The height of the empty black cannot be zero here, so the
+                // The height of the empty block cannot be zero here, so the
                 // fill cannot fail.
                 front.overlay(back.fill(Grapheme::SPACE).unwrap()).into()
             }
