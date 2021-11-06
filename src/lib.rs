@@ -8,10 +8,8 @@ pub use crate::block::Block;
 pub use crate::content::{Style, Styled};
 
 pub mod prelude {
-    pub use crate::align::{
-        AxisAligned, AxisAlignedOf as _, QuadrantAligned, QuadrantAlignedOf as _,
-    };
-    pub use crate::block::{AxialBlock, AxialBlockOf as _, Fill, HorizontalBlock, VerticalBlock};
+    pub use crate::align::{HorizontallyAligned as _, VerticallyAligned as _};
+    pub use crate::block::{Fill, StaticallyAligned as _};
     pub use crate::Render;
 }
 

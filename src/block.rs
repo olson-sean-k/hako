@@ -1,13 +1,19 @@
 use std::borrow::Cow;
 use std::cmp;
-use std::marker::PhantomData;
-use std::ops::Deref;
 
 use crate::align::{
-    Axis, Bottom, HorizontalAlignment, Left, LeftRight, Right, Top, TopBottom, VerticalAlignment,
+    Alignment, AlignmentValue, AxialAlignmentValue, Axis, AxisValue, Bottom, Coaxial, ContraAxial,
+    Left, LeftRight, Right, Top, TopBottom,
 };
 use crate::content::{Congruent, Content, ContentSlice as _, Grapheme, Layer, Style, Styled};
 use crate::Render;
+
+pub trait WithLength<A>: Sized
+where
+    A: Axis,
+{
+    fn with_length(length: usize, width: usize) -> Self;
+}
 
 pub trait Fill<C, T>
 where
@@ -16,6 +22,75 @@ where
     type Output;
 
     fn fill(self, filler: T) -> Self::Output;
+}
+
+pub trait Join<A, L>: Sized
+where
+    A: Axis,
+    L: ContraAxial<A>,
+{
+    fn join(self, other: Self) -> Self;
+}
+
+pub trait Pad<L>: Sized
+where
+    L: Alignment,
+{
+    fn pad(self, width: usize) -> Self;
+}
+
+pub trait PadToLength<A, L>: Sized
+where
+    A: Axis,
+    L: Coaxial<A>,
+{
+    fn pad_to_length(self, length: usize) -> Self;
+}
+
+pub trait DynamicallyAligned: Sized {
+    fn with_length(axis: AxisValue, length: usize, width: usize) -> Self;
+
+    fn pad(self, alignment: impl Into<AlignmentValue>, length: usize) -> Self;
+
+    fn pad_to_length(self, alignment: impl Into<AlignmentValue>, length: usize) -> Self;
+
+    fn join(self, alignment: AxialAlignmentValue, other: Self) -> Self;
+}
+
+pub trait StaticallyAligned: Sized {
+    fn with_length_at<A>(length: usize, width: usize) -> Self
+    where
+        Self: WithLength<A>,
+        A: Axis,
+    {
+        WithLength::with_length(length, width)
+    }
+
+    fn pad_at<L>(self, length: usize) -> Self
+    where
+        Self: Pad<L>,
+        L: Alignment,
+    {
+        Pad::pad(self, length)
+    }
+
+    fn pad_to_length_at<A, L>(self, length: usize) -> Self
+    where
+        Self: PadToLength<A, L>,
+        A: Axis,
+        L: Coaxial<A>,
+    {
+        PadToLength::pad_to_length(self, length)
+    }
+
+    fn join_at<A, L>(self, other: Self) -> Self
+    where
+        Self: Join<A, L>,
+        A: Axis,
+        L: ContraAxial<A>,
+    {
+        Join::join(self, other)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -578,14 +653,6 @@ where
         Self::with_dimensions(width, height).fill(filler)
     }
 
-    pub fn aligned<V, H>(self) -> AlignedBlock<C, V, H>
-    where
-        V: VerticalAlignment,
-        H: HorizontalAlignment,
-    {
-        self.into()
-    }
-
     pub fn height(&self) -> usize {
         self.inner.height()
     }
@@ -715,6 +782,53 @@ where
     }
 }
 
+impl<C> DynamicallyAligned for Block<C>
+where
+    C: Content,
+{
+    fn with_length(axis: AxisValue, length: usize, width: usize) -> Self {
+        use crate::align::AxisValue as Axis;
+
+        match axis {
+            Axis::LeftRight => Block::with_dimensions(length, width),
+            Axis::TopBottom => Block::with_dimensions(width, length),
+        }
+    }
+
+    fn pad(self, alignment: impl Into<AlignmentValue>, length: usize) -> Self {
+        use crate::align::AlignmentValue as Alignment;
+
+        match alignment.into() {
+            Alignment::LEFT => self.pad_at_left(length),
+            Alignment::RIGHT => self.pad_at_right(length),
+            Alignment::TOP => self.pad_at_top(length),
+            Alignment::BOTTOM => self.pad_at_bottom(length),
+        }
+    }
+
+    fn pad_to_length(self, alignment: impl Into<AlignmentValue>, length: usize) -> Self {
+        use crate::align::AlignmentValue as Alignment;
+
+        match alignment.into() {
+            Alignment::LEFT => self.pad_to_width_at_left(length),
+            Alignment::RIGHT => self.pad_to_width_at_right(length),
+            Alignment::TOP => self.pad_to_height_at_top(length),
+            Alignment::BOTTOM => self.pad_to_height_at_bottom(length),
+        }
+    }
+
+    fn join(self, alignment: AxialAlignmentValue, other: Self) -> Self {
+        use crate::align::AxialAlignmentValue as AxialAlignment;
+
+        match alignment {
+            AxialAlignment::LEFT_RIGHT_AT_TOP => self.join_left_to_right_at_top(other),
+            AxialAlignment::LEFT_RIGHT_AT_BOTTOM => self.join_left_to_right_at_bottom(other),
+            AxialAlignment::TOP_BOTTOM_AT_LEFT => self.join_top_to_bottom_at_left(other),
+            AxialAlignment::TOP_BOTTOM_AT_RIGHT => self.join_top_to_bottom_at_right(other),
+        }
+    }
+}
+
 impl<C> Fill<C, C> for Block<C>
 where
     C: Content,
@@ -764,6 +878,114 @@ where
     }
 }
 
+impl<C> Join<LeftRight, Bottom> for Block<C>
+where
+    C: Content,
+{
+    fn join(self, other: Self) -> Self {
+        self.join_left_to_right_at_bottom(other)
+    }
+}
+
+impl<C> Join<LeftRight, Top> for Block<C>
+where
+    C: Content,
+{
+    fn join(self, other: Self) -> Self {
+        self.join_left_to_right_at_top(other)
+    }
+}
+
+impl<C> Join<TopBottom, Left> for Block<C>
+where
+    C: Content,
+{
+    fn join(self, other: Self) -> Self {
+        self.join_top_to_bottom_at_left(other)
+    }
+}
+
+impl<C> Join<TopBottom, Right> for Block<C>
+where
+    C: Content,
+{
+    fn join(self, other: Self) -> Self {
+        self.join_top_to_bottom_at_right(other)
+    }
+}
+
+impl<C> Pad<Bottom> for Block<C>
+where
+    C: Content,
+{
+    fn pad(self, width: usize) -> Self {
+        self.pad_at_bottom(width)
+    }
+}
+
+impl<C> Pad<Left> for Block<C>
+where
+    C: Content,
+{
+    fn pad(self, width: usize) -> Self {
+        self.pad_at_left(width)
+    }
+}
+
+impl<C> Pad<Right> for Block<C>
+where
+    C: Content,
+{
+    fn pad(self, width: usize) -> Self {
+        self.pad_at_right(width)
+    }
+}
+
+impl<C> Pad<Top> for Block<C>
+where
+    C: Content,
+{
+    fn pad(self, width: usize) -> Self {
+        self.pad_at_top(width)
+    }
+}
+
+impl<C> PadToLength<LeftRight, Left> for Block<C>
+where
+    C: Content,
+{
+    fn pad_to_length(self, length: usize) -> Self {
+        self.pad_to_width_at_left(length)
+    }
+}
+
+impl<C> PadToLength<LeftRight, Right> for Block<C>
+where
+    C: Content,
+{
+    fn pad_to_length(self, length: usize) -> Self {
+        self.pad_to_width_at_right(length)
+    }
+}
+
+impl<C> PadToLength<TopBottom, Bottom> for Block<C>
+where
+    C: Content,
+{
+    fn pad_to_length(self, length: usize) -> Self {
+        self.pad_to_height_at_bottom(length)
+    }
+}
+
+impl<C> PadToLength<TopBottom, Top> for Block<C>
+where
+    C: Content,
+{
+    fn pad_to_length(self, length: usize) -> Self {
+        self.pad_to_height_at_top(length)
+    }
+}
+
 impl<C> Render for Block<C>
 where
     C: Content,
@@ -784,298 +1006,23 @@ where
     }
 }
 
-pub trait AxialBlock<C, A>: Sized
+impl<C> StaticallyAligned for Block<C> where C: Content {}
+
+impl<C> WithLength<LeftRight> for Block<C>
 where
     C: Content,
-    A: Axis,
 {
-    fn filled_along<T>(length: usize, width: usize, filler: T) -> Self
-    where
-        Block<C>: Fill<C, T, Output = Block<C>>;
-
-    fn join_along(self, other: Self) -> Self;
-}
-
-pub trait AxialBlockOf {
-    fn filled_along_of<C, A, T>(length: usize, width: usize, filler: T) -> Self
-    where
-        Self: AxialBlock<C, A>,
-        Block<C>: Fill<C, T, Output = Block<C>>,
-        C: Content,
-        A: Axis,
-    {
-        Self::filled_along(length, width, filler)
-    }
-
-    fn join_along_of<C, A>(self, other: Self) -> Self
-    where
-        Self: AxialBlock<C, A>,
-        C: Content,
-        A: Axis,
-    {
-        self.join_along(other)
+    fn with_length(length: usize, width: usize) -> Self {
+        Self::with_dimensions(length, width)
     }
 }
 
-impl<T> AxialBlockOf for T {}
-
-pub trait HorizontalBlock: Sized {
-    fn pad_horizontal(self, width: usize) -> Self;
-
-    fn pad_horizontal_opposite(self, width: usize) -> Self;
-
-    fn pad_to_width(self, width: usize) -> Self;
-
-    fn pad_to_width_opposite(self, width: usize) -> Self;
-
-    fn join_top_to_bottom(self, bottom: Self) -> Self;
-
-    fn join_top_to_bottom_opposite(self, bottom: Self) -> Self;
-}
-
-pub trait VerticalBlock: Sized {
-    fn pad_vertical(self, height: usize) -> Self;
-
-    fn pad_vertical_opposite(self, height: usize) -> Self;
-
-    fn pad_to_height(self, height: usize) -> Self;
-
-    fn pad_to_height_opposite(self, height: usize) -> Self;
-
-    fn join_left_to_right(self, other: Self) -> Self;
-
-    fn join_left_to_right_opposite(self, other: Self) -> Self;
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct AlignedBlock<C = String, V = Top, H = Left>
+impl<C> WithLength<TopBottom> for Block<C>
 where
     C: Content,
-    V: VerticalAlignment,
-    H: HorizontalAlignment,
 {
-    block: Block<C>,
-    phantom: PhantomData<(*const V, *const H)>,
-}
-
-impl<C, V, H> AlignedBlock<C, V, H>
-where
-    C: Content,
-    V: VerticalAlignment,
-    H: HorizontalAlignment,
-{
-    pub fn unaligned(self, f: impl FnOnce(Block<C>) -> Block<C>) -> Self {
-        AlignedBlock {
-            block: f(self.block),
-            phantom: PhantomData,
-        }
-    }
-}
-
-impl<C, V, H> AsRef<Block<C>> for AlignedBlock<C, V, H>
-where
-    C: Content,
-    V: VerticalAlignment,
-    H: HorizontalAlignment,
-{
-    fn as_ref(&self) -> &Block<C> {
-        &self.block
-    }
-}
-
-impl<C, V, H> AxialBlock<C, TopBottom> for AlignedBlock<C, V, H>
-where
-    Self: HorizontalBlock,
-    C: Content,
-    V: VerticalAlignment,
-    H: HorizontalAlignment,
-{
-    fn filled_along<T>(length: usize, width: usize, filler: T) -> Self
-    where
-        Block<C>: Fill<C, T, Output = Block<C>>,
-    {
-        Block::filled(width, length, filler).into()
-    }
-
-    fn join_along(self, bottom: Self) -> Self {
-        self.join_top_to_bottom(bottom)
-    }
-}
-
-impl<C, V, H> AxialBlock<C, LeftRight> for AlignedBlock<C, V, H>
-where
-    Self: VerticalBlock,
-    C: Content,
-    V: VerticalAlignment,
-    H: HorizontalAlignment,
-{
-    fn filled_along<T>(length: usize, width: usize, filler: T) -> Self
-    where
-        Block<C>: Fill<C, T, Output = Block<C>>,
-    {
-        Block::filled(length, width, filler).into()
-    }
-
-    fn join_along(self, right: Self) -> Self {
-        self.join_left_to_right(right)
-    }
-}
-
-impl<C, V, H> Deref for AlignedBlock<C, V, H>
-where
-    C: Content,
-    V: VerticalAlignment,
-    H: HorizontalAlignment,
-{
-    type Target = Block<C>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.block
-    }
-}
-
-impl<C, V, H> From<Block<C>> for AlignedBlock<C, V, H>
-where
-    C: Content,
-    V: VerticalAlignment,
-    H: HorizontalAlignment,
-{
-    fn from(block: Block<C>) -> Self {
-        AlignedBlock {
-            block,
-            phantom: PhantomData,
-        }
-    }
-}
-
-impl<C, V, H> From<AlignedBlock<C, V, H>> for Block<C>
-where
-    C: Content,
-    V: VerticalAlignment,
-    H: HorizontalAlignment,
-{
-    fn from(block: AlignedBlock<C, V, H>) -> Self {
-        block.block
-    }
-}
-
-impl<C, V> HorizontalBlock for AlignedBlock<C, V, Left>
-where
-    C: Content,
-    V: VerticalAlignment,
-{
-    fn pad_horizontal(self, width: usize) -> Self {
-        self.unaligned(|block| block.pad_at_left(width))
-    }
-
-    fn pad_horizontal_opposite(self, width: usize) -> Self {
-        self.unaligned(|block| block.pad_at_right(width))
-    }
-
-    fn pad_to_width(self, width: usize) -> Self {
-        self.unaligned(|block| block.pad_to_width_at_left(width))
-    }
-
-    fn pad_to_width_opposite(self, width: usize) -> Self {
-        self.unaligned(|block| block.pad_to_width_at_right(width))
-    }
-
-    fn join_top_to_bottom(self, bottom: Self) -> Self {
-        self.unaligned(|block| block.join_top_to_bottom_at_left(bottom.into()))
-    }
-
-    fn join_top_to_bottom_opposite(self, bottom: Self) -> Self {
-        self.unaligned(|block| block.join_top_to_bottom_at_right(bottom.into()))
-    }
-}
-
-impl<C, V> HorizontalBlock for AlignedBlock<C, V, Right>
-where
-    C: Content,
-    V: VerticalAlignment,
-{
-    fn pad_horizontal(self, width: usize) -> Self {
-        self.unaligned(|block| block.pad_at_right(width))
-    }
-
-    fn pad_horizontal_opposite(self, width: usize) -> Self {
-        self.unaligned(|block| block.pad_at_left(width))
-    }
-
-    fn pad_to_width(self, width: usize) -> Self {
-        self.unaligned(|block| block.pad_to_width_at_right(width))
-    }
-
-    fn pad_to_width_opposite(self, width: usize) -> Self {
-        self.unaligned(|block| block.pad_to_width_at_left(width))
-    }
-
-    fn join_top_to_bottom(self, bottom: Self) -> Self {
-        self.unaligned(|block| block.join_top_to_bottom_at_right(bottom.into()))
-    }
-
-    fn join_top_to_bottom_opposite(self, bottom: Self) -> Self {
-        self.unaligned(|block| block.join_top_to_bottom_at_left(bottom.into()))
-    }
-}
-
-impl<C, H> VerticalBlock for AlignedBlock<C, Bottom, H>
-where
-    C: Content,
-    H: HorizontalAlignment,
-{
-    fn pad_vertical(self, height: usize) -> Self {
-        self.unaligned(|block| block.pad_at_bottom(height))
-    }
-
-    fn pad_vertical_opposite(self, height: usize) -> Self {
-        self.unaligned(|block| block.pad_at_top(height))
-    }
-
-    fn pad_to_height(self, height: usize) -> Self {
-        self.unaligned(|block| block.pad_to_height_at_bottom(height))
-    }
-
-    fn pad_to_height_opposite(self, height: usize) -> Self {
-        self.unaligned(|block| block.pad_to_height_at_top(height))
-    }
-
-    fn join_left_to_right(self, right: Self) -> Self {
-        self.unaligned(|block| block.join_left_to_right_at_bottom(right.into()))
-    }
-
-    fn join_left_to_right_opposite(self, right: Self) -> Self {
-        self.unaligned(|block| block.join_left_to_right_at_top(right.into()))
-    }
-}
-
-impl<C, H> VerticalBlock for AlignedBlock<C, Top, H>
-where
-    C: Content,
-    H: HorizontalAlignment,
-{
-    fn pad_vertical(self, height: usize) -> Self {
-        self.unaligned(|block| block.pad_at_top(height))
-    }
-
-    fn pad_vertical_opposite(self, height: usize) -> Self {
-        self.unaligned(|block| block.pad_at_bottom(height))
-    }
-
-    fn pad_to_height(self, height: usize) -> Self {
-        self.unaligned(|block| block.pad_to_height_at_top(height))
-    }
-
-    fn pad_to_height_opposite(self, height: usize) -> Self {
-        self.unaligned(|block| block.pad_to_height_at_bottom(height))
-    }
-
-    fn join_left_to_right(self, right: Self) -> Self {
-        self.unaligned(|block| block.join_left_to_right_at_top(right.into()))
-    }
-
-    fn join_left_to_right_opposite(self, right: Self) -> Self {
-        self.unaligned(|block| block.join_left_to_right_at_bottom(right.into()))
+    fn with_length(length: usize, width: usize) -> Self {
+        Self::with_dimensions(width, length)
     }
 }
 

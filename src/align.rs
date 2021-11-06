@@ -1,41 +1,225 @@
 use itertools::Position;
 
+pub type OrthogonalOrigin<A> = <<A as Axis>::Orthogonal as Axis>::Origin;
+
+pub trait Axis: Sized {
+    type Orthogonal: Axis;
+    type Origin: Coaxial<Self>;
+
+    const VALUE: AxisValue;
+}
+
+pub enum LeftRight {}
+pub enum TopBottom {}
+
+impl Axis for LeftRight {
+    type Orthogonal = TopBottom;
+    type Origin = Left;
+
+    const VALUE: AxisValue = AxisValue::LeftRight;
+}
+
+impl Axis for TopBottom {
+    type Orthogonal = LeftRight;
+    type Origin = Top;
+
+    const VALUE: AxisValue = AxisValue::TopBottom;
+}
+
+pub trait Alignment {
+    type Opposite: Coaxial<Self::Axis>;
+    type Axis: Axis;
+
+    const VALUE: AlignmentValue;
+}
+
+pub trait HorizontalAlignment:
+    Coaxial<LeftRight> + ContraAxial<TopBottom> + HorizontalDecoder
+{
+}
+
+impl<L> HorizontalAlignment for L where
+    L: Coaxial<LeftRight> + ContraAxial<TopBottom> + HorizontalDecoder
+{
+}
+
+pub trait VerticalAlignment: Coaxial<TopBottom> + ContraAxial<LeftRight> + VerticalDecoder {}
+
+impl<L> VerticalAlignment for L where
+    L: Coaxial<TopBottom> + ContraAxial<LeftRight> + VerticalDecoder
+{
+}
+
+pub trait HorizontalDecoder {
+    fn aligned<T>(data: &impl HorizontallyAligned<T>) -> &T;
+}
+
+pub trait VerticalDecoder {
+    fn aligned<T>(data: &impl VerticallyAligned<T>) -> &T;
+}
+
+pub enum Left {}
+pub enum Right {}
+pub enum Top {}
+pub enum Bottom {}
+
+impl Alignment for Left {
+    type Opposite = Right;
+    type Axis = LeftRight;
+
+    const VALUE: AlignmentValue = AlignmentValue::LEFT;
+}
+
+impl HorizontalDecoder for Left {
+    fn aligned<T>(data: &impl HorizontallyAligned<T>) -> &T {
+        data.left()
+    }
+}
+
+impl Alignment for Right {
+    type Opposite = Left;
+    type Axis = LeftRight;
+
+    const VALUE: AlignmentValue = AlignmentValue::RIGHT;
+}
+
+impl HorizontalDecoder for Right {
+    fn aligned<T>(data: &impl HorizontallyAligned<T>) -> &T {
+        data.right()
+    }
+}
+
+impl Alignment for Top {
+    type Opposite = Bottom;
+    type Axis = TopBottom;
+
+    const VALUE: AlignmentValue = AlignmentValue::TOP;
+}
+
+impl VerticalDecoder for Top {
+    fn aligned<T>(data: &impl VerticallyAligned<T>) -> &T {
+        data.top()
+    }
+}
+
+impl Alignment for Bottom {
+    type Opposite = Top;
+    type Axis = TopBottom;
+
+    const VALUE: AlignmentValue = AlignmentValue::BOTTOM;
+}
+
+impl VerticalDecoder for Bottom {
+    fn aligned<T>(data: &impl VerticallyAligned<T>) -> &T {
+        data.bottom()
+    }
+}
+
+pub trait Coaxial<A>: Alignment<Axis = A>
+where
+    A: Axis,
+{
+}
+
+impl<A, L> Coaxial<A> for L
+where
+    A: Axis,
+    L: Alignment<Axis = A>,
+{
+}
+
+pub trait ContraAxial<A>: Alignment<Axis = <A as Axis>::Orthogonal>
+where
+    A: Axis,
+{
+}
+
+impl<A, L> ContraAxial<A> for L
+where
+    A: Axis,
+    L: Alignment<Axis = <A as Axis>::Orthogonal>,
+{
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum AxisValue {
     LeftRight,
     TopBottom,
 }
 
-pub trait Axis {
-    type Orthogonal: Axis;
+impl AxisValue {
+    pub const fn origin(&self) -> AlignmentValue {
+        match *self {
+            AxisValue::LeftRight => AlignmentValue::LEFT,
+            AxisValue::TopBottom => AlignmentValue::TOP,
+        }
+    }
 }
-
-pub enum LeftRight {}
-pub enum TopBottom {}
-
-pub type UpDown = TopBottom;
-
-impl Axis for LeftRight {
-    type Orthogonal = TopBottom;
-}
-
-impl Axis for TopBottom {
-    type Orthogonal = LeftRight;
-}
-
-pub trait Alignment {
-    type Opposite: Alignment;
-    type Axis: Axis;
-}
-
-pub trait HorizontalAlignment: Alignment {}
-
-pub trait VerticalAlignment: Alignment {}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum AlignmentValue {
     Horizontal(HorizontalAlignmentValue),
     Vertical(VerticalAlignmentValue),
+}
+
+impl AlignmentValue {
+    pub const LEFT: Self = AlignmentValue::Horizontal(HorizontalAlignmentValue::Left);
+    pub const RIGHT: Self = AlignmentValue::Horizontal(HorizontalAlignmentValue::Right);
+    pub const TOP: Self = AlignmentValue::Vertical(VerticalAlignmentValue::Top);
+    pub const BOTTOM: Self = AlignmentValue::Vertical(VerticalAlignmentValue::Bottom);
+
+    pub const fn opposite(&self) -> Self {
+        match *self {
+            Self::LEFT => Self::RIGHT,
+            Self::RIGHT => Self::LEFT,
+            Self::TOP => Self::BOTTOM,
+            Self::BOTTOM => Self::TOP,
+        }
+    }
+
+    pub const fn axis(&self) -> AxisValue {
+        match *self {
+            Self::LEFT | Self::RIGHT => AxisValue::LeftRight,
+            Self::TOP | Self::BOTTOM => AxisValue::TopBottom,
+        }
+    }
+
+    pub fn is_left(&self) -> bool {
+        matches!(
+            self,
+            AlignmentValue::Horizontal(HorizontalAlignmentValue::Left)
+        )
+    }
+
+    pub fn is_right(&self) -> bool {
+        matches!(
+            self,
+            AlignmentValue::Horizontal(HorizontalAlignmentValue::Right)
+        )
+    }
+
+    pub fn is_top(&self) -> bool {
+        matches!(self, AlignmentValue::Vertical(VerticalAlignmentValue::Top))
+    }
+
+    pub fn is_bottom(&self) -> bool {
+        matches!(
+            self,
+            AlignmentValue::Vertical(VerticalAlignmentValue::Bottom)
+        )
+    }
+}
+
+impl From<HorizontalAlignmentValue> for AlignmentValue {
+    fn from(horizontal: HorizontalAlignmentValue) -> Self {
+        AlignmentValue::Horizontal(horizontal)
+    }
+}
+
+impl From<VerticalAlignmentValue> for AlignmentValue {
+    fn from(vertical: VerticalAlignmentValue) -> Self {
+        AlignmentValue::Vertical(vertical)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -44,113 +228,75 @@ pub enum HorizontalAlignmentValue {
     Right,
 }
 
+impl HorizontalAlignmentValue {
+    pub const AXIS: AxisValue = AxisValue::LeftRight;
+
+    pub const fn opposite(&self) -> Self {
+        match *self {
+            HorizontalAlignmentValue::Left => HorizontalAlignmentValue::Right,
+            HorizontalAlignmentValue::Right => HorizontalAlignmentValue::Left,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum VerticalAlignmentValue {
     Top,
     Bottom,
 }
 
-pub enum Left {}
-pub enum Right {}
-pub enum Top {}
-pub enum Bottom {}
+impl VerticalAlignmentValue {
+    pub const AXIS: AxisValue = AxisValue::TopBottom;
 
-pub type Up = Top;
-pub type Down = Bottom;
-
-impl Alignment for Left {
-    type Opposite = Right;
-    type Axis = LeftRight;
-}
-
-impl HorizontalAlignment for Left {}
-
-impl Alignment for Right {
-    type Opposite = Left;
-    type Axis = LeftRight;
-}
-
-impl HorizontalAlignment for Right {}
-
-impl Alignment for Top {
-    type Opposite = Bottom;
-    type Axis = TopBottom;
-}
-
-impl VerticalAlignment for Top {}
-
-impl Alignment for Bottom {
-    type Opposite = Top;
-    type Axis = TopBottom;
-}
-
-impl VerticalAlignment for Bottom {}
-
-pub trait AxisAligned<A>
-where
-    A: Alignment,
-{
-    type Output;
-
-    fn axis_aligned(&self) -> &Self::Output;
-}
-
-pub trait AxisAlignedOf {
-    fn axis_aligned_of<A>(&self) -> &Self::Output
-    where
-        Self: AxisAligned<A>,
-        A: Alignment,
-    {
-        AxisAligned::<A>::axis_aligned(self)
+    pub const fn opposite(&self) -> Self {
+        match *self {
+            VerticalAlignmentValue::Top => VerticalAlignmentValue::Bottom,
+            VerticalAlignmentValue::Bottom => VerticalAlignmentValue::Top,
+        }
     }
 }
 
-impl<T> AxisAlignedOf for T {}
-
-pub trait QuadrantAligned<V, H>
-where
-    V: VerticalAlignment,
-    H: HorizontalAlignment,
-{
-    type Output;
-
-    fn quadrant_aligned(&self) -> &Self::Output;
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum AxialAlignmentValue {
+    LeftRight(VerticalAlignmentValue),
+    TopBottom(HorizontalAlignmentValue),
 }
 
-pub trait QuadrantAlignedOf {
-    fn quadrant_aligned_of<V, H>(&self) -> &Self::Output
+impl AxialAlignmentValue {
+    pub const LEFT_RIGHT_AT_TOP: Self = AxialAlignmentValue::LeftRight(VerticalAlignmentValue::Top);
+    pub const LEFT_RIGHT_AT_BOTTOM: Self =
+        AxialAlignmentValue::LeftRight(VerticalAlignmentValue::Bottom);
+    pub const TOP_BOTTOM_AT_LEFT: Self =
+        AxialAlignmentValue::TopBottom(HorizontalAlignmentValue::Left);
+    pub const TOP_BOTTOM_AT_RIGHT: Self =
+        AxialAlignmentValue::TopBottom(HorizontalAlignmentValue::Right);
+}
+
+pub trait HorizontallyAligned<T>: Sized {
+    fn left(&self) -> &T;
+
+    fn right(&self) -> &T;
+
+    fn aligned_at<H>(&self) -> &T
     where
-        Self: QuadrantAligned<V, H>,
-        V: VerticalAlignment,
-        H: HorizontalAlignment,
+        H: HorizontalDecoder,
     {
-        QuadrantAligned::<V, H>::quadrant_aligned(self)
+        H::aligned(self)
     }
 }
 
-impl<T> QuadrantAlignedOf for T {}
+pub trait VerticallyAligned<T>: Sized {
+    fn top(&self) -> &T;
 
-pub trait AxisOrdered<A>: Sized
-where
-    A: Alignment,
-{
-    type Output: IntoIterator<Item = Self::Item>;
-    type Item;
+    fn bottom(&self) -> &T;
 
-    fn axis_ordered(self) -> Self::Output;
-}
-
-pub trait AxisOrderedOf: Sized {
-    fn axis_ordered_of<A>(self) -> Self::Output
+    fn aligned_at<V>(&self) -> &T
     where
-        Self: AxisOrdered<A>,
-        A: Alignment,
+        V: VerticalDecoder,
     {
-        AxisOrdered::<A>::axis_ordered(self)
+        V::aligned(self)
     }
 }
-
-impl<T> AxisOrderedOf for T {}
 
 #[derive(Clone, Copy, Debug)]
 pub struct Horizontal<T> {
@@ -159,51 +305,20 @@ pub struct Horizontal<T> {
 }
 
 impl<T> Horizontal<T> {
-    pub fn with<A, U, F>(&self, mut f: F) -> U
+    pub fn aligned(&self, alignment: HorizontalAlignmentValue) -> &T {
+        match alignment {
+            HorizontalAlignmentValue::Left => &self.left,
+            HorizontalAlignmentValue::Right => &self.left,
+        }
+    }
+
+    pub fn with<H, U, F>(&self, mut f: F) -> U
     where
-        Self: AxisAligned<A, Output = T>,
-        Self: AxisAligned<A::Opposite, Output = T>,
-        A: HorizontalAlignment,
+        H: HorizontalAlignment,
+        H::Opposite: HorizontalAlignment,
         F: FnMut(&T, &T) -> U,
     {
-        f(
-            self.axis_aligned_of::<A>(),
-            self.axis_aligned_of::<A::Opposite>(),
-        )
-    }
-}
-
-impl<T> AxisAligned<Left> for Horizontal<T> {
-    type Output = T;
-
-    fn axis_aligned(&self) -> &Self::Output {
-        &self.left
-    }
-}
-
-impl<T> AxisAligned<Right> for Horizontal<T> {
-    type Output = T;
-
-    fn axis_aligned(&self) -> &Self::Output {
-        &self.right
-    }
-}
-
-impl<T> AxisOrdered<Left> for Horizontal<T> {
-    type Output = [T; 2];
-    type Item = T;
-
-    fn axis_ordered(self) -> Self::Output {
-        [self.left, self.right]
-    }
-}
-
-impl<T> AxisOrdered<Right> for Horizontal<T> {
-    type Output = [T; 2];
-    type Item = T;
-
-    fn axis_ordered(self) -> Self::Output {
-        [self.right, self.left]
+        f(self.aligned_at::<H>(), self.aligned_at::<H::Opposite>())
     }
 }
 
@@ -235,6 +350,16 @@ where
     }
 }
 
+impl<T> HorizontallyAligned<T> for Horizontal<T> {
+    fn left(&self) -> &T {
+        &self.left
+    }
+
+    fn right(&self) -> &T {
+        &self.left
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Vertical<T> {
     pub top: T,
@@ -242,51 +367,20 @@ pub struct Vertical<T> {
 }
 
 impl<T> Vertical<T> {
-    pub fn with<A, U, F>(&self, mut f: F) -> U
+    pub fn aligned(&self, alignment: VerticalAlignmentValue) -> &T {
+        match alignment {
+            VerticalAlignmentValue::Top => &self.top,
+            VerticalAlignmentValue::Bottom => &self.bottom,
+        }
+    }
+
+    pub fn with<V, U, F>(&self, mut f: F) -> U
     where
-        Self: AxisAligned<A, Output = T>,
-        Self: AxisAligned<A::Opposite, Output = T>,
-        A: VerticalAlignment,
+        V: VerticalAlignment,
+        V::Opposite: VerticalAlignment,
         F: FnMut(&T, &T) -> U,
     {
-        f(
-            self.axis_aligned_of::<A>(),
-            self.axis_aligned_of::<A::Opposite>(),
-        )
-    }
-}
-
-impl<T> AxisAligned<Top> for Vertical<T> {
-    type Output = T;
-
-    fn axis_aligned(&self) -> &Self::Output {
-        &self.top
-    }
-}
-
-impl<T> AxisAligned<Bottom> for Vertical<T> {
-    type Output = T;
-
-    fn axis_aligned(&self) -> &Self::Output {
-        &self.bottom
-    }
-}
-
-impl<T> AxisOrdered<Top> for Vertical<T> {
-    type Output = [T; 2];
-    type Item = T;
-
-    fn axis_ordered(self) -> Self::Output {
-        [self.top, self.bottom]
-    }
-}
-
-impl<T> AxisOrdered<Bottom> for Vertical<T> {
-    type Output = [T; 2];
-    type Item = T;
-
-    fn axis_ordered(self) -> Self::Output {
-        [self.bottom, self.top]
+        f(self.aligned_at::<V>(), self.aligned_at::<V::Opposite>())
     }
 }
 
@@ -318,39 +412,17 @@ where
     }
 }
 
+impl<T> VerticallyAligned<T> for Vertical<T> {
+    fn top(&self) -> &T {
+        &self.top
+    }
+
+    fn bottom(&self) -> &T {
+        &self.bottom
+    }
+}
+
 pub type Cornered<T> = Vertical<Horizontal<T>>;
-
-impl<T> QuadrantAligned<Top, Left> for Cornered<T> {
-    type Output = T;
-
-    fn quadrant_aligned(&self) -> &Self::Output {
-        &self.top.left
-    }
-}
-
-impl<T> QuadrantAligned<Top, Right> for Cornered<T> {
-    type Output = T;
-
-    fn quadrant_aligned(&self) -> &Self::Output {
-        &self.top.right
-    }
-}
-
-impl<T> QuadrantAligned<Bottom, Left> for Cornered<T> {
-    type Output = T;
-
-    fn quadrant_aligned(&self) -> &Self::Output {
-        &self.bottom.left
-    }
-}
-
-impl<T> QuadrantAligned<Bottom, Right> for Cornered<T> {
-    type Output = T;
-
-    fn quadrant_aligned(&self) -> &Self::Output {
-        &self.bottom.right
-    }
-}
 
 #[derive(Clone, Copy, Debug)]
 pub struct Square<T> {
@@ -361,48 +433,32 @@ pub struct Square<T> {
 }
 
 impl<T> Square<T> {
-    pub fn with<A, U, F>(&self, mut f: F) -> U
-    where
-        Self: AxisAligned<A, Output = T>,
-        Self: AxisAligned<A::Opposite, Output = T>,
-        A: Alignment,
-        F: FnMut(&T, &T) -> U,
-    {
-        f(
-            self.axis_aligned_of::<A>(),
-            self.axis_aligned_of::<A::Opposite>(),
-        )
+    pub fn aligned(&self, alignment: AlignmentValue) -> &T {
+        match alignment {
+            AlignmentValue::LEFT => &self.left,
+            AlignmentValue::RIGHT => &self.right,
+            AlignmentValue::TOP => &self.top,
+            AlignmentValue::BOTTOM => &self.bottom,
+        }
     }
 }
 
-impl<T> AxisAligned<Left> for Square<T> {
-    type Output = T;
-
-    fn axis_aligned(&self) -> &Self::Output {
+impl<T> HorizontallyAligned<T> for Square<T> {
+    fn left(&self) -> &T {
         &self.left
     }
-}
 
-impl<T> AxisAligned<Right> for Square<T> {
-    type Output = T;
-
-    fn axis_aligned(&self) -> &Self::Output {
+    fn right(&self) -> &T {
         &self.right
     }
 }
 
-impl<T> AxisAligned<Top> for Square<T> {
-    type Output = T;
-
-    fn axis_aligned(&self) -> &Self::Output {
+impl<T> VerticallyAligned<T> for Square<T> {
+    fn top(&self) -> &T {
         &self.top
     }
-}
 
-impl<T> AxisAligned<Bottom> for Square<T> {
-    type Output = T;
-
-    fn axis_aligned(&self) -> &Self::Output {
+    fn bottom(&self) -> &T {
         &self.bottom
     }
 }
