@@ -168,6 +168,7 @@ impl AlignmentValue {
     pub const TOP: Self = AlignmentValue::Vertical(VerticalAlignmentValue::Top);
     pub const BOTTOM: Self = AlignmentValue::Vertical(VerticalAlignmentValue::Bottom);
 
+    #[must_use]
     pub const fn opposite(&self) -> Self {
         match *self {
             Self::LEFT => Self::RIGHT,
@@ -231,6 +232,7 @@ pub enum HorizontalAlignmentValue {
 impl HorizontalAlignmentValue {
     pub const AXIS: AxisValue = AxisValue::LeftRight;
 
+    #[must_use]
     pub const fn opposite(&self) -> Self {
         match *self {
             HorizontalAlignmentValue::Left => HorizontalAlignmentValue::Right,
@@ -248,6 +250,7 @@ pub enum VerticalAlignmentValue {
 impl VerticalAlignmentValue {
     pub const AXIS: AxisValue = AxisValue::TopBottom;
 
+    #[must_use]
     pub const fn opposite(&self) -> Self {
         match *self {
             VerticalAlignmentValue::Top => VerticalAlignmentValue::Bottom,

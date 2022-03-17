@@ -30,6 +30,7 @@ where
     A: Axis,
     L: ContraAxial<A>,
 {
+    #[must_use]
     fn join(self, other: Self) -> Self;
 }
 
@@ -37,6 +38,7 @@ pub trait Pad<L>: Sized
 where
     L: Alignment,
 {
+    #[must_use]
     fn pad(self, width: usize) -> Self;
 }
 
@@ -45,16 +47,20 @@ where
     A: Axis,
     L: Coaxial<A>,
 {
+    #[must_use]
     fn pad_to_length(self, length: usize) -> Self;
 }
 
 pub trait DynamicallyAligned: Sized {
     fn with_length(axis: AxisValue, length: usize, width: usize) -> Self;
 
+    #[must_use]
     fn pad(self, alignment: impl Into<AlignmentValue>, length: usize) -> Self;
 
+    #[must_use]
     fn pad_to_length(self, alignment: impl Into<AlignmentValue>, length: usize) -> Self;
 
+    #[must_use]
     fn join(self, alignment: AxialAlignmentValue, other: Self) -> Self;
 }
 
@@ -67,6 +73,7 @@ pub trait StaticallyAligned: Sized {
         WithLength::with_length(length, width)
     }
 
+    #[must_use]
     fn pad_at<L>(self, length: usize) -> Self
     where
         Self: Pad<L>,
@@ -75,6 +82,7 @@ pub trait StaticallyAligned: Sized {
         Pad::pad(self, length)
     }
 
+    #[must_use]
     fn pad_to_length_at<A, L>(self, length: usize) -> Self
     where
         Self: PadToLength<A, L>,
@@ -84,6 +92,7 @@ pub trait StaticallyAligned: Sized {
         PadToLength::pad_to_length(self, length)
     }
 
+    #[must_use]
     fn join_at<A, L>(self, other: Self) -> Self
     where
         Self: Join<A, L>,
@@ -678,6 +687,7 @@ impl<C> Block<C>
 where
     C: Content,
 {
+    #[must_use]
     pub fn push(self, content: impl Into<C>) -> Self {
         Block {
             inner: self
@@ -695,22 +705,27 @@ impl<C> Block<C>
 where
     C: Content,
 {
+    #[must_use]
     pub fn pad_to_width_at_right(self, width: usize) -> Self {
         self.inner.pad_to_width_at_right(width).into()
     }
 
+    #[must_use]
     pub fn pad_to_height_at_bottom(self, height: usize) -> Self {
         self.inner.pad_to_height_at_bottom(height).into()
     }
 
+    #[must_use]
     pub fn join_left_to_right_at_top(self, right: Self) -> Self {
         self.inner.join_left_to_right_at_top(right.inner).into()
     }
 
+    #[must_use]
     pub fn join_top_to_bottom_at_left(self, bottom: Self) -> Self {
         self.inner.join_top_to_bottom_at_left(bottom.inner).into()
     }
 
+    #[must_use]
     pub fn overlay(self, back: Self) -> Self {
         self.inner.overlay(back.inner).into()
     }
@@ -720,42 +735,50 @@ impl<C> Block<C>
 where
     C: Content,
 {
+    #[must_use]
     pub fn pad_at_left(self, width: usize) -> Self {
         let padding = Block::filled(width, self.height(), Grapheme::SPACE);
         padding.join_left_to_right_at_top(self)
     }
 
+    #[must_use]
     pub fn pad_at_right(self, width: usize) -> Self {
         let padding = Block::filled(width, self.height(), Grapheme::SPACE);
         self.join_left_to_right_at_top(padding)
     }
 
+    #[must_use]
     pub fn pad_at_top(self, height: usize) -> Self {
         let padding = Block::filled(self.width(), height, Grapheme::SPACE);
         padding.join_top_to_bottom_at_left(self)
     }
 
+    #[must_use]
     pub fn pad_at_bottom(self, height: usize) -> Self {
         let padding = Block::filled(self.width(), height, Grapheme::SPACE);
         self.join_top_to_bottom_at_left(padding)
     }
 
+    #[must_use]
     pub fn pad_to_width_at_left(self, width: usize) -> Self {
         let width = width.saturating_sub(self.width());
         self.pad_at_left(width)
     }
 
+    #[must_use]
     pub fn pad_to_height_at_top(self, height: usize) -> Self {
         let height = height.saturating_sub(self.height());
         self.pad_at_top(height)
     }
 
+    #[must_use]
     pub fn join_left_to_right_at_bottom(self, right: Self) -> Self {
         let height = cmp::max(self.height(), right.height());
         self.pad_to_height_at_top(height)
             .join_left_to_right_at_top(right.pad_to_height_at_top(height))
     }
 
+    #[must_use]
     pub fn join_top_to_bottom_at_right(self, bottom: Self) -> Self {
         let width = cmp::max(self.width(), bottom.width());
         self.pad_to_width_at_left(width)
@@ -776,6 +799,7 @@ where
     C: AsRef<str> + Content + From<String>,
     S: Default + Style,
 {
+    #[must_use]
     pub fn restyle(self, style: S) -> Self {
         Block {
             inner: self.inner.restyle(style),

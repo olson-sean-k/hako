@@ -134,12 +134,15 @@ pub trait Content: Clone + Debug + Sized + Render {
         Self::grapheme(Grapheme::SPACE)
     }
 
+    #[must_use]
     fn repeat(self, n: usize) -> Self;
 
+    #[must_use]
     fn truncate(self, width: usize) -> Self;
 
     fn into_lines(self) -> Vec<Self>;
 
+    #[must_use]
     fn concatenate(left: Self, right: Self) -> Self;
 
     fn overlay_zip_with(
@@ -294,6 +297,7 @@ where
         }
     }
 
+    #[must_use]
     pub fn restyle(self, style: S) -> Self {
         Styled {
             fragments: vec![(
