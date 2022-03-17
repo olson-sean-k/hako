@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::cmp;
+use std::io::{self, Write};
 
 use crate::align::{
     Alignment, AlignmentValue, AxialAlignmentValue, Axis, AxisValue, Bottom, Coaxial, ContraAxial,
@@ -990,14 +991,23 @@ impl<C> Render for Block<C>
 where
     C: Content,
 {
+    fn render_into(&self, target: &mut impl Write) -> io::Result<()> {
+        if let ModalBlock::Content(ref block) = self.inner {
+            for line in block.lines.iter() {
+                line.render_into(target)?;
+            }
+        }
+        Ok(())
+    }
+
     fn render(&self) -> Cow<str> {
         match self.inner {
             ModalBlock::Empty(_) => "".into(),
             ModalBlock::Content(ref block) => block
                 .lines
                 .iter()
-                .fold(String::new(), |mut output, content| {
-                    output.push_str(content.render().trim_end());
+                .fold(String::new(), |mut output, line| {
+                    output.push_str(line.render().trim_end());
                     output.push('\n');
                     output
                 })

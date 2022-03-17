@@ -3,6 +3,7 @@ pub mod block;
 pub mod content;
 
 use std::borrow::Cow;
+use std::io::{self, Write};
 
 pub use crate::block::Block;
 pub use crate::content::{Style, Styled};
@@ -14,6 +15,10 @@ pub mod prelude {
 }
 
 pub trait Render {
+    fn render_into(&self, target: &mut impl Write) -> io::Result<()> {
+        target.write_all(self.render().as_bytes())
+    }
+
     fn render(&self) -> Cow<str>;
 }
 

@@ -1,6 +1,7 @@
 use itertools::{Itertools as _, Position};
 use std::borrow::Cow;
 use std::fmt::Debug;
+use std::io::{self, Write};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr as UnicodeWidth;
 
@@ -469,6 +470,13 @@ where
     C: AsRef<str> + Content + From<String>,
     S: Style,
 {
+    fn render_into(&self, target: &mut impl Write) -> io::Result<()> {
+        for (style, fragment) in self.fragments.iter() {
+            target.write_all(style.apply(fragment.as_ref()).as_bytes())?;
+        }
+        Ok(())
+    }
+
     fn render(&self) -> Cow<str> {
         self.fragments
             .iter()
