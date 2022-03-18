@@ -156,7 +156,7 @@ impl EmptyBlock {
     }
 }
 
-impl<'t, C> Fill<C, C> for EmptyBlock
+impl<C> Fill<C, C> for EmptyBlock
 where
     C: Content,
 {
