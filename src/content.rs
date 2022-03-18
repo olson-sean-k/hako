@@ -173,9 +173,9 @@ impl<'t> Content for Cow<'t, str> {
     fn truncate(self, width: usize) -> Self {
         self.graphemes(true)
             .take(width)
-            .fold(String::new(), |mut content, cluster| {
-                content.push_str(cluster);
-                content
+            .fold(String::new(), |mut output, glyph| {
+                output.push_str(glyph);
+                output
             })
             .into()
     }
@@ -230,9 +230,9 @@ impl Content for String {
     fn truncate(self, width: usize) -> Self {
         self.graphemes(true)
             .take(width)
-            .fold(String::new(), |mut content, cluster| {
-                content.push_str(cluster);
-                content
+            .fold(String::new(), |mut output, glyph| {
+                output.push_str(glyph);
+                output
             })
     }
 
@@ -304,9 +304,9 @@ where
                 style,
                 self.fragments
                     .into_iter()
-                    .map(|(_, fragment)| fragment)
-                    .fold(C::empty(), |content, fragment| {
-                        C::concatenate(content, fragment)
+                    .map(|(_, content)| content)
+                    .fold(C::empty(), |output, content| {
+                        C::concatenate(output, content)
                     }),
             )],
         }
@@ -316,8 +316,8 @@ where
         self.fragments
             .iter()
             .enumerate()
-            .flat_map(|(index, (_, fragment))| {
-                fragment
+            .flat_map(|(index, (_, content))| {
+                content
                     .as_ref()
                     .graphemes(true)
                     .map(move |point| (index, Grapheme::unchecked(point)))
@@ -334,7 +334,7 @@ where
         Styled {
             fragments: fragments
                 .into_iter()
-                .map(|(style, fragment)| (style, fragment.into_owned().into()))
+                .map(|(style, content)| (style, content.into_owned().into()))
                 .collect(),
         }
     }
@@ -372,7 +372,7 @@ where
                         Err(((i, previous), (j, next)))
                     }
                 })
-                .map(|(_, fragment)| fragment)
+                .map(|(_, content)| content)
                 .collect(),
         }
     }
@@ -382,17 +382,17 @@ where
         let mut fragments: Vec<_> = self
             .fragments
             .into_iter()
-            .take_while(|(_, fragment)| {
+            .take_while(|(_, content)| {
                 let has_capacity = sum < width;
-                sum += fragment.width();
+                sum += content.width();
                 has_capacity
             })
             .collect();
         let n = sum.saturating_sub(width);
         if n > 0 {
-            if let Some(fragment) = fragments.pop().map(|(style, fragment)| {
-                let width = fragment.width() - n;
-                (style, fragment.truncate(width))
+            if let Some(fragment) = fragments.pop().map(|(style, content)| {
+                let width = content.width() - n;
+                (style, content.truncate(width))
             }) {
                 fragments.push(fragment);
             }
@@ -403,8 +403,8 @@ where
     fn into_lines(self) -> Vec<Self> {
         let mut lines = vec![];
         let mut line = Styled::empty();
-        for (style, fragment) in self.fragments {
-            for split in fragment.as_ref().lines().with_position() {
+        for (style, content) in self.fragments {
+            for split in content.as_ref().lines().with_position() {
                 match split {
                     Position::Only(split) | Position::First(split) => {
                         line = Content::concatenate(
@@ -447,7 +447,7 @@ where
             )
             .group_by(|(index, _)| *index)
             .into_iter()
-            .fold(Styled::empty(), |left, (index, group)| {
+            .fold(Styled::empty(), |output, (index, group)| {
                 let text: String = group
                     .into_iter()
                     .map(|(_, glyph)| glyph.get().to_owned())
@@ -456,7 +456,7 @@ where
                     Layer::Front(index) => front.fragments.get(index).unwrap().0.clone(),
                     Layer::Back(index) => back.fragments.get(index).unwrap().0.clone(),
                 };
-                Content::concatenate(left, Styled::new(style, text))
+                Content::concatenate(output, Styled::new(style, text))
             });
         overlay
     }
@@ -464,7 +464,7 @@ where
     fn width(&self) -> usize {
         self.fragments
             .iter()
-            .map(|(_, fragment)| fragment.as_ref().width())
+            .map(|(_, content)| content.as_ref().width())
             .sum()
     }
 }
@@ -475,8 +475,8 @@ where
     S: Style,
 {
     fn render_into(&self, target: &mut impl Write) -> io::Result<()> {
-        for (style, fragment) in self.fragments.iter() {
-            target.write_all(style.apply(fragment.as_ref()).as_bytes())?;
+        for (style, content) in self.fragments.iter() {
+            target.write_all(style.apply(content.as_ref()).as_bytes())?;
         }
         Ok(())
     }
@@ -484,9 +484,9 @@ where
     fn render(&self) -> Cow<str> {
         self.fragments
             .iter()
-            .fold(String::new(), |mut text, (style, fragment)| {
-                text.push_str(style.apply(fragment.as_ref()).as_ref());
-                text
+            .fold(String::new(), |mut output, (style, content)| {
+                output.push_str(style.apply(content.as_ref()).as_ref());
+                output
             })
             .into()
     }
