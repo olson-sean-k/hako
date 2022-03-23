@@ -1,5 +1,3 @@
-use itertools::Position;
-
 pub type OrthogonalOrigin<A> = <<A as Axis>::Orthogonal as Axis>::Origin;
 
 pub trait Axis: Sized {
@@ -325,34 +323,6 @@ impl<T> Horizontal<T> {
     }
 }
 
-// TODO: This is odd, but allows `First` and `Last` to swap. Perhaps use a
-//       bespoke extension trait for this conversion instead.
-impl<T> From<Position<T>> for Horizontal<Position<T>>
-where
-    T: Copy,
-{
-    fn from(position: Position<T>) -> Horizontal<Position<T>> {
-        match position {
-            Position::Only(_) => Horizontal {
-                left: position,
-                right: position,
-            },
-            Position::First(inner) => Horizontal {
-                left: position,
-                right: Position::Last(inner),
-            },
-            Position::Middle(_) => Horizontal {
-                left: position,
-                right: position,
-            },
-            Position::Last(inner) => Horizontal {
-                left: position,
-                right: Position::First(inner),
-            },
-        }
-    }
-}
-
 impl<T> HorizontallyAligned<T> for Horizontal<T> {
     fn left(&self) -> &T {
         &self.left
@@ -384,34 +354,6 @@ impl<T> Vertical<T> {
         F: FnMut(&T, &T) -> U,
     {
         f(self.aligned_at::<V>(), self.aligned_at::<V::Opposite>())
-    }
-}
-
-// TODO: This is odd, but allows `First` and `Last` to swap. Perhaps use a
-//       bespoke extension trait for this conversion instead.
-impl<T> From<Position<T>> for Vertical<Position<T>>
-where
-    T: Copy,
-{
-    fn from(position: Position<T>) -> Vertical<Position<T>> {
-        match position {
-            Position::Only(_) => Vertical {
-                top: position,
-                bottom: position,
-            },
-            Position::First(inner) => Vertical {
-                top: position,
-                bottom: Position::Last(inner),
-            },
-            Position::Middle(_) => Vertical {
-                top: position,
-                bottom: position,
-            },
-            Position::Last(inner) => Vertical {
-                top: position,
-                bottom: Position::First(inner),
-            },
-        }
     }
 }
 
