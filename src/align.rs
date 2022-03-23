@@ -359,7 +359,7 @@ impl<T> HorizontallyAligned<T> for Horizontal<T> {
     }
 
     fn right(&self) -> &T {
-        &self.left
+        &self.right
     }
 }
 
