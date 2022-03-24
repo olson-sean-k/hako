@@ -145,9 +145,10 @@ pub trait Content: Clone + Debug + Sized + Render {
     #[must_use]
     fn concatenate(left: Self, right: Self) -> Self;
 
-    fn overlay_zip_with(
+    #[rustfmt::skip]
+    fn overlay_with(
         content: Congruent<Self>,
-        f: impl FnMut(Grapheme, Grapheme) -> Layer,
+        f: impl FnMut(&Grapheme, &Grapheme) -> Layer,
     ) -> Self;
 
     fn width(&self) -> usize;
@@ -192,16 +193,16 @@ impl<'t> Content for Cow<'t, str> {
         format!("{}{}", left, right).into()
     }
 
-    fn overlay_zip_with(
+    fn overlay_with(
         content: Congruent<Self>,
-        mut f: impl FnMut(Grapheme, Grapheme) -> Layer,
+        mut f: impl FnMut(&Grapheme, &Grapheme) -> Layer,
     ) -> Self {
         let (front, back) = content.into();
         front
             .graphemes(true)
             .zip(back.graphemes(true))
             .map(
-                |(front, back)| match f(Grapheme::unchecked(front), Grapheme::unchecked(back)) {
+                |(front, back)| match f(&Grapheme::unchecked(front), &Grapheme::unchecked(back)) {
                     Layer::Front(_) => front,
                     Layer::Back(_) => back,
                 },
@@ -244,16 +245,16 @@ impl Content for String {
         format!("{}{}", left, right)
     }
 
-    fn overlay_zip_with(
+    fn overlay_with(
         content: Congruent<Self>,
-        mut f: impl FnMut(Grapheme, Grapheme) -> Layer,
+        mut f: impl FnMut(&Grapheme, &Grapheme) -> Layer,
     ) -> Self {
         let (front, back) = content.into();
         front
             .graphemes(true)
             .zip(back.graphemes(true))
             .map(
-                |(front, back)| match f(Grapheme::unchecked(front), Grapheme::unchecked(back)) {
+                |(front, back)| match f(&Grapheme::unchecked(front), &Grapheme::unchecked(back)) {
                     Layer::Front(_) => front,
                     Layer::Back(_) => back,
                 },
@@ -312,7 +313,7 @@ where
         }
     }
 
-    fn graphemes<'i>(&'i self) -> impl 'i + Iterator<Item = (usize, Grapheme)> {
+    fn style_indexed_graphemes<'i>(&'i self) -> impl 'i + Iterator<Item = (usize, Grapheme)> {
         self.fragments
             .iter()
             .enumerate()
@@ -430,21 +431,18 @@ where
         }
     }
 
-    // TODO: Yikes, there's probably a much cleaner way to do this.
-    fn overlay_zip_with(
+    fn overlay_with(
         content: Congruent<Self>,
-        mut f: impl FnMut(Grapheme, Grapheme) -> Layer,
+        mut f: impl FnMut(&Grapheme, &Grapheme) -> Layer,
     ) -> Self {
         let (front, back) = content.into();
         let overlay = front
-            .graphemes()
-            .zip(back.graphemes())
-            .map(
-                |((i, front), (j, back))| match f(front.clone(), back.clone()) {
-                    Layer::Front(_) => (Layer::Front(i), front),
-                    Layer::Back(_) => (Layer::Back(j), back),
-                },
-            )
+            .style_indexed_graphemes()
+            .zip(back.style_indexed_graphemes())
+            .map(|((i, front), (j, back))| match f(&front, &back) {
+                Layer::Front(_) => (Layer::Front(i), front),
+                Layer::Back(_) => (Layer::Back(j), back),
+            })
             .group_by(|(index, _)| *index)
             .into_iter()
             .fold(Styled::empty(), |output, (index, group)| {

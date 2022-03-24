@@ -322,7 +322,11 @@ where
         }
     }
 
-    pub fn overlay(self, back: Self) -> Self {
+    pub fn overlay_with(
+        self,
+        back: Self,
+        mut f: impl FnMut(&Grapheme, &Grapheme) -> Layer,
+    ) -> Self {
         let width = cmp::max(self.width(), back.width());
         let height = cmp::max(self.height(), back.height());
         let front = self
@@ -336,17 +340,7 @@ where
             .into_iter()
             .zip(back.lines)
             .map(|(front, back)| {
-                Content::overlay_zip_with(
-                    Congruent::try_from((front, back)).unwrap(),
-                    |front, _| {
-                        if front == Grapheme::SPACE {
-                            Layer::Back(())
-                        }
-                        else {
-                            Layer::Front(())
-                        }
-                    },
-                )
+                Content::overlay_with(Congruent::try_from((front, back)).unwrap(), &mut f)
             })
             .collect();
         lines.into()
@@ -535,9 +529,22 @@ where
     }
 
     pub fn overlay(self, back: Self) -> Self {
+        self.overlay_with(back, |front, _| {
+            if *front == Grapheme::SPACE {
+                Layer::Back(())
+            }
+            else {
+                Layer::Front(())
+            }
+        })
+    }
+
+    pub fn overlay_with(self, back: Self, f: impl FnMut(&Grapheme, &Grapheme) -> Layer) -> Self {
         match (self, back) {
             (ModalBlock::Empty(front), ModalBlock::Empty(back)) => front.overlay(back).into(),
-            (ModalBlock::Content(front), ModalBlock::Content(back)) => front.overlay(back).into(),
+            (ModalBlock::Content(front), ModalBlock::Content(back)) => {
+                front.overlay_with(back, f).into()
+            }
             (ModalBlock::Empty(front), ModalBlock::Content(back)) => {
                 let width = cmp::max(front.width, back.width());
                 let height = cmp::max(front.height, back.height());
@@ -549,7 +556,11 @@ where
                     .pad_to_height_at_bottom(height);
                 // The height of the empty block cannot be zero here, so the
                 // fill cannot fail.
-                front.fill(Grapheme::SPACE).unwrap().overlay(back).into()
+                front
+                    .fill(Grapheme::SPACE)
+                    .unwrap()
+                    .overlay_with(back, f)
+                    .into()
             }
             (ModalBlock::Content(front), ModalBlock::Empty(back)) => {
                 let width = cmp::max(front.width(), back.width);
@@ -562,7 +573,9 @@ where
                     .pad_to_height_at_bottom(height);
                 // The height of the empty block cannot be zero here, so the
                 // fill cannot fail.
-                front.overlay(back.fill(Grapheme::SPACE).unwrap()).into()
+                front
+                    .overlay_with(back.fill(Grapheme::SPACE).unwrap(), f)
+                    .into()
             }
         }
     }
