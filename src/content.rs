@@ -26,6 +26,35 @@ where
     }
 }
 
+pub trait Cell {}
+
+impl Cell for char {}
+
+pub trait FromCell<T>
+where
+    T: Cell,
+{
+    fn from_cell(cell: T) -> Self;
+}
+
+impl<C> FromCell<char> for C
+where
+    C: Content,
+{
+    fn from_cell(point: char) -> Self {
+        Self::grapheme(point.into())
+    }
+}
+
+impl<'t, C> FromCell<Grapheme<'t>> for C
+where
+    C: Content,
+{
+    fn from_cell(grapheme: Grapheme<'t>) -> Self {
+        Self::grapheme(grapheme)
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Grapheme<'t>(Cow<'t, str>);
 
@@ -51,9 +80,18 @@ impl<'t> AsRef<str> for Grapheme<'t> {
     }
 }
 
+impl<'t> Cell for Grapheme<'t> {}
+
 impl From<char> for Grapheme<'static> {
     fn from(point: char) -> Self {
         Grapheme(String::from(point).into())
+    }
+}
+
+impl<'t, S> From<StyledCell<'t, S>> for Grapheme<'t> {
+    fn from(cell: StyledCell<'t, S>) -> Self {
+        let StyledCell { grapheme, .. } = cell;
+        grapheme
     }
 }
 
@@ -467,6 +505,17 @@ where
     }
 }
 
+impl<'t, C, S> FromCell<StyledCell<'t, S>> for Styled<C, S>
+where
+    C: AsRef<str> + Content + From<String>,
+    S: Style,
+{
+    fn from_cell(cell: StyledCell<'t, S>) -> Self {
+        let StyledCell { style, grapheme } = cell;
+        Styled::new(style, C::from_cell(grapheme))
+    }
+}
+
 impl<C, S> Render for Styled<C, S>
 where
     C: AsRef<str> + Content + From<String>,
@@ -487,5 +536,25 @@ where
                 output
             })
             .into()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct StyledCell<'t, S> {
+    pub style: S,
+    pub grapheme: Grapheme<'t>,
+}
+
+impl<'t, S> Cell for StyledCell<'t, S> {}
+
+impl<'t, S> From<Grapheme<'t>> for StyledCell<'t, S>
+where
+    S: Default,
+{
+    fn from(grapheme: Grapheme<'t>) -> Self {
+        StyledCell {
+            style: Default::default(),
+            grapheme,
+        }
     }
 }
