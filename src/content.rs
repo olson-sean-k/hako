@@ -313,7 +313,7 @@ where
         }
     }
 
-    fn style_indexed_graphemes<'i>(&'i self) -> impl 'i + Iterator<Item = (usize, Grapheme)> {
+    fn fragment_indexed_graphemes<'i>(&'i self) -> impl 'i + Iterator<Item = (usize, Grapheme)> {
         self.fragments
             .iter()
             .enumerate()
@@ -437,8 +437,8 @@ where
     ) -> Self {
         let (front, back) = content.into();
         let overlay = front
-            .style_indexed_graphemes()
-            .zip(back.style_indexed_graphemes())
+            .fragment_indexed_graphemes()
+            .zip(back.fragment_indexed_graphemes())
             .map(|((i, front), (j, back))| match f(&front, &back) {
                 Layer::Front(_) => (Layer::Front(i), front),
                 Layer::Back(_) => (Layer::Back(j), back),
