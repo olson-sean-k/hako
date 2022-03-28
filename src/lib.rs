@@ -1,6 +1,7 @@
 pub mod align;
 pub mod block;
 pub mod content;
+pub mod primitive;
 
 use std::borrow::Cow;
 use std::io::{self, Write};
