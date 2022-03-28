@@ -1,6 +1,6 @@
 pub type OrthogonalOrigin<A> = <<A as Axis>::Orthogonal as Axis>::Origin;
 
-pub trait Axis: Sized {
+pub trait Axis: AxialDecoder + Sized {
     type Orthogonal: Axis;
     type Origin: Coaxial<Self>;
 
@@ -10,11 +10,23 @@ pub trait Axis: Sized {
 pub enum LeftRight {}
 pub enum TopBottom {}
 
+impl AxialDecoder for LeftRight {
+    fn aligned<T>(data: &impl AxiallyAligned<T>) -> &T {
+        data.horizontal()
+    }
+}
+
 impl Axis for LeftRight {
     type Orthogonal = TopBottom;
     type Origin = Left;
 
     const VALUE: AxisValue = AxisValue::LeftRight;
+}
+
+impl AxialDecoder for TopBottom {
+    fn aligned<T>(data: &impl AxiallyAligned<T>) -> &T {
+        data.vertical()
+    }
 }
 
 impl Axis for TopBottom {
@@ -54,6 +66,10 @@ pub trait HorizontalDecoder {
 
 pub trait VerticalDecoder {
     fn aligned<T>(data: &impl VerticallyAligned<T>) -> &T;
+}
+
+pub trait AxialDecoder {
+    fn aligned<T>(data: &impl AxiallyAligned<T>) -> &T;
 }
 
 pub enum Left {}
@@ -299,6 +315,19 @@ pub trait VerticallyAligned<T>: Sized {
     }
 }
 
+pub trait AxiallyAligned<T>: Sized {
+    fn horizontal(&self) -> &T;
+
+    fn vertical(&self) -> &T;
+
+    fn aligned_at<A>(&self) -> &T
+    where
+        A: AxialDecoder,
+    {
+        A::aligned(self)
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Horizontal<T> {
     pub left: T,
@@ -412,4 +441,14 @@ impl<T> VerticallyAligned<T> for Square<T> {
 pub struct Axial<T> {
     pub horizontal: T,
     pub vertical: T,
+}
+
+impl<T> AxiallyAligned<T> for Axial<T> {
+    fn horizontal(&self) -> &T {
+        &self.horizontal
+    }
+
+    fn vertical(&self) -> &T {
+        &self.vertical
+    }
 }
