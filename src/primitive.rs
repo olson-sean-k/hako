@@ -2,6 +2,28 @@ use crate::align::{Axial, AxiallyAligned, Axis, ContraAxial, OrthogonalOrigin};
 use crate::block::{self, Block, Fill};
 use crate::content::{Cell, Content, FromCell};
 
+pub trait AxialPalette {
+    type Output;
+
+    fn aligned_at<A>(self) -> Self::Output
+    where
+        A: Axis;
+}
+
+impl<T> AxialPalette for Axial<T>
+where
+    T: Clone,
+{
+    type Output = T;
+
+    fn aligned_at<A>(self) -> Self::Output
+    where
+        A: Axis,
+    {
+        AxiallyAligned::aligned_at::<A>(&self).clone()
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum TerminalCell<T>
 where
@@ -90,17 +112,6 @@ impl<T> LinePalette<T>
 where
     T: Cell + Clone,
 {
-    pub fn aligned<A>(only: Axial<T>, middle: Axial<T>, terminal: Axial<TerminalCell<T>>) -> Self
-    where
-        A: Axis,
-    {
-        LinePalette {
-            only: only.aligned_at::<A>().clone(),
-            middle: middle.aligned_at::<A>().clone(),
-            terminal: terminal.aligned_at::<A>().clone(),
-        }
-    }
-
     pub fn uniform(cell: T) -> Self {
         LinePalette {
             only: cell.clone(),
@@ -110,18 +121,34 @@ where
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct Line<T>
+impl<T> AxialPalette for LinePalette<T>
 where
     T: Cell,
 {
-    pub length: usize,
-    pub palette: LinePalette<T>,
+    type Output = Self;
+
+    fn aligned_at<A>(self) -> Self::Output
+    where
+        A: Axis,
+    {
+        self
+    }
 }
 
-impl<T> Line<T>
+#[derive(Clone, Copy, Debug)]
+pub struct Line<T, P = LinePalette<T>>
+where
+    T: Cell,
+    P: AxialPalette<Output = LinePalette<T>>,
+{
+    pub length: usize,
+    pub palette: P,
+}
+
+impl<T, P> Line<T, P>
 where
     T: Cell + Clone,
+    P: AxialPalette<Output = LinePalette<T>>,
 {
     pub fn into_block<A, C>(self) -> Block<C>
     where
@@ -129,18 +156,15 @@ where
         A: Axis,
         C: Content + FromCell<T>,
     {
-        let Line {
-            length,
-            palette:
-                LinePalette {
-                    only,
-                    middle,
-                    terminal,
-                },
-        } = self;
+        let Line { length, palette } = self;
+        let LinePalette {
+            only,
+            middle,
+            terminal,
+        } = palette.aligned_at::<A>();
         match length {
             0 => Block::zero(),
-            1 => Block::filled(1, 1, C::from_cell(only)),
+            1 => Block::with_content(C::from_cell(only)),
             _ => Block::with_content(C::from_cell(terminal.start().clone()))
                 .join(Block::with_length(length - 2, 1).fill(C::from_cell(middle)))
                 .join(Block::with_content(C::from_cell(terminal.end().clone()))),
@@ -150,7 +174,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::align::LeftRight;
+    use crate::align::{Axial, LeftRight};
     use crate::primitive::{Line, LinePalette};
 
     use std::borrow::Cow;
@@ -163,6 +187,15 @@ mod tests {
                 only: '-',
                 middle: '-',
                 terminal: ('<', '>').into(),
+            },
+        }
+        .into_block::<LeftRight, Cow<str>>();
+
+        let _ = Line {
+            length: 5,
+            palette: Axial {
+                horizontal: LinePalette::uniform('-'),
+                vertical: LinePalette::uniform('|'),
             },
         }
         .into_block::<LeftRight, Cow<str>>();
