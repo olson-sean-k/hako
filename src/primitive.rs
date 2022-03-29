@@ -1,5 +1,5 @@
 use crate::align::{Axial, AxiallyAligned, Axis, ContraAxial, OrthogonalOrigin};
-use crate::block::{self, Block, Fill};
+use crate::block::{Block, Fill, Join, WithLength};
 use crate::content::{Cell, Content, FromCell};
 
 pub trait AxialPalette {
@@ -25,138 +25,75 @@ where
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum TerminalCell<T>
+pub enum TerminalCell<G>
 where
-    T: Cell,
+    G: Cell,
 {
-    Only(T),
-    StartEnd(T, T),
+    Only(G),
+    StartEnd(G, G),
 }
 
-impl<T> TerminalCell<T>
+impl<G> TerminalCell<G>
 where
-    T: Cell,
+    G: Cell,
 {
-    pub fn only_or_else<'a>(&'a self, mut f: impl FnMut(&'a T, &'a T) -> &'a T) -> &T {
+    pub fn only_or_else<'a>(&'a self, mut f: impl FnMut(&'a G, &'a G) -> &'a G) -> &G {
         match self {
             TerminalCell::Only(ref x) => x,
             TerminalCell::StartEnd(ref start, ref end) => f(start, end),
         }
     }
 
-    pub fn start(&self) -> &T {
+    pub fn start(&self) -> &G {
         self.only_or_else(|start, _| start)
     }
 
-    pub fn end(&self) -> &T {
+    pub fn end(&self) -> &G {
         self.only_or_else(|_, end| end)
     }
 }
 
-impl<T> From<T> for TerminalCell<T>
+impl<G> From<G> for TerminalCell<G>
 where
-    T: Cell,
+    G: Cell,
 {
-    fn from(only: T) -> Self {
+    fn from(only: G) -> Self {
         TerminalCell::Only(only)
     }
 }
 
-impl<T> From<(T, T)> for TerminalCell<T>
+impl<G> From<(G, G)> for TerminalCell<G>
 where
-    T: Cell,
+    G: Cell,
 {
-    fn from((start, end): (T, T)) -> Self {
+    fn from((start, end): (G, G)) -> Self {
         TerminalCell::StartEnd(start, end)
     }
 }
 
-pub trait FromLine<A, C>
+pub trait Line<A, C>
 where
     A: Axis,
     C: Content,
 {
-    fn with_length(length: usize, width: usize) -> Self;
-
-    #[must_use]
-    fn join(self, other: Self) -> Self;
+    fn line<G>(length: usize, palette: impl AxialPalette<Output = LinePalette<G>>) -> Self
+    where
+        C: FromCell<G>,
+        G: Cell + Clone;
 }
 
-impl<A, C> FromLine<A, C> for Block<C>
+impl<A, C> Line<A, C> for Block<C>
 where
-    Self: block::Join<A, OrthogonalOrigin<A>> + block::WithLength<A>,
+    Self: Join<A, OrthogonalOrigin<A>> + WithLength<A>,
     OrthogonalOrigin<A>: ContraAxial<A>,
     A: Axis,
     C: Content,
 {
-    fn with_length(length: usize, width: usize) -> Self {
-        block::WithLength::with_length(length, width)
-    }
-
-    fn join(self, other: Self) -> Self {
-        block::Join::join(self, other)
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct LinePalette<T>
-where
-    T: Cell,
-{
-    pub only: T,
-    pub middle: T,
-    pub terminal: TerminalCell<T>,
-}
-
-impl<T> LinePalette<T>
-where
-    T: Cell + Clone,
-{
-    pub fn uniform(cell: T) -> Self {
-        LinePalette {
-            only: cell.clone(),
-            middle: cell.clone(),
-            terminal: TerminalCell::Only(cell),
-        }
-    }
-}
-
-impl<T> AxialPalette for LinePalette<T>
-where
-    T: Cell,
-{
-    type Output = Self;
-
-    fn aligned_at<A>(self) -> Self::Output
+    fn line<G>(length: usize, palette: impl AxialPalette<Output = LinePalette<G>>) -> Self
     where
-        A: Axis,
+        C: FromCell<G>,
+        G: Cell + Clone,
     {
-        self
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct Line<T, P = LinePalette<T>>
-where
-    T: Cell,
-    P: AxialPalette<Output = LinePalette<T>>,
-{
-    pub length: usize,
-    pub palette: P,
-}
-
-impl<T, P> Line<T, P>
-where
-    T: Cell + Clone,
-    P: AxialPalette<Output = LinePalette<T>>,
-{
-    pub fn into_block<A, C>(self) -> Block<C>
-    where
-        Block<C>: FromLine<A, C>,
-        A: Axis,
-        C: Content + FromCell<T>,
-    {
-        let Line { length, palette } = self;
         let LinePalette {
             only,
             middle,
@@ -172,32 +109,74 @@ where
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct LinePalette<G>
+where
+    G: Cell,
+{
+    pub only: G,
+    pub middle: G,
+    pub terminal: TerminalCell<G>,
+}
+
+impl<G> LinePalette<G>
+where
+    G: Cell + Clone,
+{
+    pub fn uniform(cell: G) -> Self {
+        LinePalette {
+            only: cell.clone(),
+            middle: cell.clone(),
+            terminal: TerminalCell::Only(cell),
+        }
+    }
+}
+
+impl<G> AxialPalette for LinePalette<G>
+where
+    G: Cell,
+{
+    type Output = Self;
+
+    fn aligned_at<A>(self) -> Self::Output
+    where
+        A: Axis,
+    {
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::align::{Axial, LeftRight};
+    use crate::align::{Axial, LeftRight, TopBottom};
+    use crate::block::Block;
     use crate::primitive::{Line, LinePalette};
+    use crate::Render;
 
     use std::borrow::Cow;
 
     #[test]
     fn line() {
-        let _ = Line {
-            length: 5,
-            palette: LinePalette {
+        let block: Block<Cow<str>> = Line::<LeftRight, _>::line(
+            5,
+            LinePalette {
                 only: '-',
                 middle: '-',
                 terminal: ('<', '>').into(),
             },
-        }
-        .into_block::<LeftRight, Cow<str>>();
+        );
+        assert_eq!(block.render(), "<--->\n");
 
-        let _ = Line {
-            length: 5,
-            palette: Axial {
+        let block: Block = Line::<LeftRight, _>::line(
+            5,
+            Axial {
                 horizontal: LinePalette::uniform('-'),
                 vertical: LinePalette::uniform('|'),
             },
-        }
-        .into_block::<LeftRight, Cow<str>>();
+        );
+        assert_eq!(block.render(), "-----\n");
+
+        let block: Block = Line::<TopBottom, _>::line(3, LinePalette::uniform('|'));
+        assert_eq!(block.render(), "|\n|\n|\n");
     }
 }

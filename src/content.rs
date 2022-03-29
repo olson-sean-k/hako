@@ -30,11 +30,11 @@ pub trait Cell {}
 
 impl Cell for char {}
 
-pub trait FromCell<T>
+pub trait FromCell<G>
 where
-    T: Cell,
+    G: Cell,
 {
-    fn from_cell(cell: T) -> Self;
+    fn from_cell(cell: G) -> Self;
 }
 
 impl<C> FromCell<char> for C
