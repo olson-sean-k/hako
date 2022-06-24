@@ -60,14 +60,20 @@ impl<L> VerticalAlignment for L where
 {
 }
 
+// TODO: Do not export this trait. It is an implementation detail with which
+//       client code need not directly interact nor understand.
 pub trait HorizontalDecoder {
     fn aligned<T>(data: &impl HorizontallyAligned<T>) -> &T;
 }
 
+// TODO: Do not export this trait. It is an implementation detail with which
+//       client code need not directly interact nor understand.
 pub trait VerticalDecoder {
     fn aligned<T>(data: &impl VerticallyAligned<T>) -> &T;
 }
 
+// TODO: Do not export this trait. It is an implementation detail with which
+//       client code need not directly interact nor understand.
 pub trait AxialDecoder {
     fn aligned<T>(data: &impl AxiallyAligned<T>) -> &T;
 }
@@ -153,6 +159,43 @@ where
     A: Axis,
     L: Alignment<Axis = <A as Axis>::Orthogonal>,
 {
+}
+
+pub trait Oriented {
+    type Origin: Alignment;
+}
+
+pub trait Rotate<L>: Oriented
+where
+    L: Alignment,
+{
+    type Output;
+
+    fn rotate(self) -> Self::Output;
+}
+
+impl<T> Rotate<<T as Oriented>::Origin> for T
+where
+    T: Oriented,
+{
+    type Output = Self;
+
+    fn rotate(self) -> Self::Output {
+        self
+    }
+}
+
+pub trait Invert: Sized {
+    fn invert(self) -> Self;
+}
+
+impl<T> Invert for T
+where
+    T: Rotate<<<T as Oriented>::Origin as Alignment>::Opposite, Output = Self>,
+{
+    fn invert(self) -> Self {
+        self.rotate()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -296,7 +339,7 @@ pub trait HorizontallyAligned<T>: Sized {
 
     fn aligned_at<H>(&self) -> &T
     where
-        H: HorizontalDecoder,
+        H: HorizontalAlignment,
     {
         H::aligned(self)
     }
@@ -309,7 +352,7 @@ pub trait VerticallyAligned<T>: Sized {
 
     fn aligned_at<V>(&self) -> &T
     where
-        V: VerticalDecoder,
+        V: VerticalAlignment,
     {
         V::aligned(self)
     }
@@ -322,7 +365,7 @@ pub trait AxiallyAligned<T>: Sized {
 
     fn aligned_at<A>(&self) -> &T
     where
-        A: AxialDecoder,
+        A: Axis,
     {
         A::aligned(self)
     }
@@ -338,7 +381,7 @@ impl<T> Horizontal<T> {
     pub fn aligned(&self, alignment: HorizontalAlignmentValue) -> &T {
         match alignment {
             HorizontalAlignmentValue::Left => &self.left,
-            HorizontalAlignmentValue::Right => &self.left,
+            HorizontalAlignmentValue::Right => &self.right,
         }
     }
 
@@ -352,6 +395,22 @@ impl<T> Horizontal<T> {
     }
 }
 
+impl<T> Horizontal<Vertical<T>> {
+    pub fn transpose(self) -> Vertical<Horizontal<T>> {
+        let Horizontal { left, right } = self;
+        Vertical {
+            top: Horizontal {
+                left: left.top,
+                right: right.top,
+            },
+            bottom: Horizontal {
+                left: left.bottom,
+                right: right.bottom,
+            },
+        }
+    }
+}
+
 impl<T> HorizontallyAligned<T> for Horizontal<T> {
     fn left(&self) -> &T {
         &self.left
@@ -359,6 +418,46 @@ impl<T> HorizontallyAligned<T> for Horizontal<T> {
 
     fn right(&self) -> &T {
         &self.right
+    }
+}
+
+impl<T> Oriented for Horizontal<T> {
+    type Origin = <LeftRight as Axis>::Origin;
+}
+
+impl<T> Rotate<Right> for Horizontal<T> {
+    type Output = Self;
+
+    fn rotate(self) -> Self::Output {
+        let Horizontal { left, right } = self;
+        Horizontal {
+            left: right,
+            right: left,
+        }
+    }
+}
+
+impl<T> Rotate<Top> for Horizontal<T> {
+    type Output = Vertical<T>;
+
+    fn rotate(self) -> Self::Output {
+        let Horizontal { left, right } = self;
+        Vertical {
+            top: left,
+            bottom: right,
+        }
+    }
+}
+
+impl<T> Rotate<Bottom> for Horizontal<T> {
+    type Output = Vertical<T>;
+
+    fn rotate(self) -> Self::Output {
+        let Horizontal { left, right } = self;
+        Vertical {
+            top: right,
+            bottom: left,
+        }
     }
 }
 
@@ -386,6 +485,62 @@ impl<T> Vertical<T> {
     }
 }
 
+impl<T> Vertical<Horizontal<T>> {
+    pub fn transpose(self) -> Horizontal<Vertical<T>> {
+        let Vertical { top, bottom } = self;
+        Horizontal {
+            left: Vertical {
+                top: top.left,
+                bottom: bottom.left,
+            },
+            right: Vertical {
+                top: top.right,
+                bottom: bottom.right,
+            },
+        }
+    }
+}
+
+impl<T> Oriented for Vertical<T> {
+    type Origin = <TopBottom as Axis>::Origin;
+}
+
+impl<T> Rotate<Left> for Vertical<T> {
+    type Output = Horizontal<T>;
+
+    fn rotate(self) -> Self::Output {
+        let Vertical { top, bottom } = self;
+        Horizontal {
+            left: top,
+            right: bottom,
+        }
+    }
+}
+
+impl<T> Rotate<Right> for Vertical<T> {
+    type Output = Horizontal<T>;
+
+    fn rotate(self) -> Self::Output {
+        let Vertical { top, bottom } = self;
+        Horizontal {
+            left: bottom,
+            right: top,
+        }
+    }
+}
+
+impl<T> Rotate<Bottom> for Vertical<T> {
+    type Output = Self;
+
+    fn rotate(self) -> Self::Output {
+        let Vertical { top, bottom } = self;
+        Vertical {
+            top: bottom,
+            bottom: top,
+        }
+    }
+}
+
 impl<T> VerticallyAligned<T> for Vertical<T> {
     fn top(&self) -> &T {
         &self.top
@@ -396,17 +551,98 @@ impl<T> VerticallyAligned<T> for Vertical<T> {
     }
 }
 
-pub type Cornered<T> = Vertical<Horizontal<T>>;
+#[derive(Clone, Copy, Debug)]
+pub struct Quadrant<T> {
+    pub top: Horizontal<T>,
+    pub bottom: Horizontal<T>,
+}
+
+impl<T> Quadrant<T> {
+    pub fn aligned(
+        &self,
+        vertical: VerticalAlignmentValue,
+        horizontal: HorizontalAlignmentValue,
+    ) -> &T {
+        use HorizontalAlignmentValue::{Left, Right};
+        use VerticalAlignmentValue::{Bottom, Top};
+
+        match (vertical, horizontal) {
+            (Bottom, Left) => &self.bottom.left,
+            (Bottom, Right) => &self.bottom.right,
+            (Top, Left) => &self.top.left,
+            (Top, Right) => &self.top.right,
+        }
+    }
+}
+
+impl<T> From<Vertical<Horizontal<T>>> for Quadrant<T> {
+    fn from(vertical: Vertical<Horizontal<T>>) -> Self {
+        let Vertical { top, bottom } = vertical;
+        Quadrant { top, bottom }
+    }
+}
+
+impl<T> Oriented for Quadrant<T> {
+    type Origin = Top;
+}
+
+impl<T> Rotate<Left> for Quadrant<T> {
+    type Output = Self;
+
+    fn rotate(self) -> Self::Output {
+        let Quadrant { top, bottom } = self;
+        let horizontal = Horizontal {
+            left: Rotate::<Bottom>::rotate(top),
+            right: Rotate::<Bottom>::rotate(bottom),
+        };
+        horizontal.transpose().into()
+    }
+}
+
+impl<T> Rotate<Right> for Quadrant<T> {
+    type Output = Self;
+
+    fn rotate(self) -> Self::Output {
+        let Quadrant { top, bottom } = self;
+        let horizontal = Horizontal {
+            left: Rotate::<Top>::rotate(top),
+            right: Rotate::<Top>::rotate(bottom),
+        };
+        horizontal.transpose().into()
+    }
+}
+
+impl<T> Rotate<Bottom> for Quadrant<T> {
+    type Output = Self;
+
+    fn rotate(self) -> Self::Output {
+        let Quadrant { top, bottom } = self;
+        Quadrant {
+            top: bottom.invert(),
+            bottom: top.invert(),
+        }
+    }
+}
+
+impl<T> VerticallyAligned<Horizontal<T>> for Quadrant<T> {
+    fn top(&self) -> &Horizontal<T> {
+        &self.top
+    }
+
+    fn bottom(&self) -> &Horizontal<T> {
+        &self.bottom
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
-pub struct Square<T> {
+pub struct Perimeter<T> {
     pub left: T,
     pub right: T,
     pub top: T,
     pub bottom: T,
 }
 
-impl<T> Square<T> {
+impl<T> Perimeter<T> {
     pub fn aligned(&self, alignment: AlignmentValue) -> &T {
         match alignment {
             AlignmentValue::LEFT => &self.left,
@@ -417,7 +653,7 @@ impl<T> Square<T> {
     }
 }
 
-impl<T> HorizontallyAligned<T> for Square<T> {
+impl<T> HorizontallyAligned<T> for Perimeter<T> {
     fn left(&self) -> &T {
         &self.left
     }
@@ -427,7 +663,68 @@ impl<T> HorizontallyAligned<T> for Square<T> {
     }
 }
 
-impl<T> VerticallyAligned<T> for Square<T> {
+impl<T> Oriented for Perimeter<T> {
+    type Origin = Top;
+}
+
+impl<T> Rotate<Left> for Perimeter<T> {
+    type Output = Self;
+
+    fn rotate(self) -> Self::Output {
+        let Perimeter {
+            left,
+            right,
+            top,
+            bottom,
+        } = self;
+        Perimeter {
+            left: top,
+            right: bottom,
+            top: right,
+            bottom: left,
+        }
+    }
+}
+
+impl<T> Rotate<Right> for Perimeter<T> {
+    type Output = Self;
+
+    fn rotate(self) -> Self::Output {
+        let Perimeter {
+            left,
+            right,
+            top,
+            bottom,
+        } = self;
+        Perimeter {
+            left: bottom,
+            right: top,
+            top: left,
+            bottom: right,
+        }
+    }
+}
+
+impl<T> Rotate<Bottom> for Perimeter<T> {
+    type Output = Self;
+
+    fn rotate(self) -> Self::Output {
+        let Perimeter {
+            left,
+            right,
+            top,
+            bottom,
+        } = self;
+        Perimeter {
+            left: right,
+            right: left,
+            top: bottom,
+            bottom: top,
+        }
+    }
+}
+
+impl<T> VerticallyAligned<T> for Perimeter<T> {
     fn top(&self) -> &T {
         &self.top
     }
@@ -450,5 +747,18 @@ impl<T> AxiallyAligned<T> for Axial<T> {
 
     fn vertical(&self) -> &T {
         &self.vertical
+    }
+}
+
+impl<T> Invert for Axial<T> {
+    fn invert(self) -> Self {
+        let Axial {
+            horizontal,
+            vertical,
+        } = self;
+        Axial {
+            horizontal: vertical,
+            vertical: horizontal,
+        }
     }
 }
