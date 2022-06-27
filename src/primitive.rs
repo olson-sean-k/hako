@@ -76,10 +76,11 @@ where
     A: Axis,
     C: Content,
 {
-    fn line<G>(length: usize, palette: impl AxialPalette<Output = LinePalette<G>>) -> Self
+    fn line<G, P>(length: usize, palette: &P) -> Self
     where
         C: FromCell<G>,
-        G: Cell + Clone;
+        G: Cell + Clone,
+        P: AxialPalette<Output = LinePalette<G>> + Clone;
 }
 
 impl<A, C> Line<A, C> for Block<C>
@@ -89,16 +90,17 @@ where
     A: Axis,
     C: Content,
 {
-    fn line<G>(length: usize, palette: impl AxialPalette<Output = LinePalette<G>>) -> Self
+    fn line<G, P>(length: usize, palette: &P) -> Self
     where
         C: FromCell<G>,
         G: Cell + Clone,
+        P: AxialPalette<Output = LinePalette<G>> + Clone,
     {
         let LinePalette {
             only,
             middle,
             terminal,
-        } = palette.aligned_at::<A>();
+        } = palette.clone().aligned_at::<A>();
         match length {
             0 => Block::zero(),
             1 => Block::with_content(C::from_cell(only)),
@@ -159,7 +161,7 @@ mod tests {
     fn line() {
         let block: Block<Cow<str>> = Line::<LeftRight, _>::line(
             5,
-            LinePalette {
+            &LinePalette {
                 only: '-',
                 middle: '-',
                 terminal: ('<', '>').into(),
@@ -169,14 +171,14 @@ mod tests {
 
         let block: Block = Line::<LeftRight, _>::line(
             5,
-            Axial {
+            &Axial {
                 horizontal: LinePalette::uniform('-'),
                 vertical: LinePalette::uniform('|'),
             },
         );
         assert_eq!(block.render(), "-----\n");
 
-        let block: Block = Line::<TopBottom, _>::line(3, LinePalette::uniform('|'));
+        let block: Block = Line::<TopBottom, _>::line(3, &LinePalette::uniform('|'));
         assert_eq!(block.render(), "|\n|\n|\n");
     }
 }

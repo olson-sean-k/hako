@@ -1044,6 +1044,10 @@ where
                 .lines
                 .iter()
                 .fold(String::new(), |mut output, line| {
+                    // TODO: This trimming should always be performed, but is
+                    //       not. Instead, move the trim into the `Render`
+                    //       implementations for string types so that trimming
+                    //       is applied consistently.
                     output.push_str(line.render().trim_end());
                     output.push('\n');
                     output
