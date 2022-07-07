@@ -1,73 +1,131 @@
-use crate::align::{Axial, AxiallyAligned, Axis, ContraAxial, OrthogonalOrigin};
+use crate::align::{Oriented, Left, Right, Top, Bottom, Rotate, Quadrant, Axial, AxiallyAligned, Axis, ContraAxial, OrthogonalOrigin, AxisValue};
 use crate::block::{Block, Fill, Join, WithLength};
 use crate::content::{Cell, Content, FromCell};
 
-pub trait AxialPalette {
-    type Output;
-
-    fn aligned_at<A>(self) -> Self::Output
-    where
-        A: Axis;
+#[derive(Clone, Copy, Debug)]
+pub struct AxisVector {
+    axis: AxisValue,
+    length: isize,
 }
 
-impl<T> AxialPalette for Axial<T>
-where
-    T: Clone,
-{
-    type Output = T;
+impl Oriented for AxisVector {
+    type Origin = Top;
+}
 
-    fn aligned_at<A>(self) -> Self::Output
-    where
-        A: Axis,
-    {
-        AxiallyAligned::aligned_at::<A>(&self).clone()
+impl Rotate<Left> for AxisVector {
+    type Output = Self;
+
+    fn rotate(self) -> Self::Output {
+        use AxisValue::{TopBottom, LeftRight};
+
+        let AxisVector { axis, length } = self;
+        match axis {
+            LeftRight => AxisVector {
+                axis: TopBottom,
+                length: -length,
+            },
+            TopBottom => AxisVector {
+                axis: LeftRight,
+                length,
+            },
+        }
+    }
+}
+
+pub trait Uniform<T>: Sized {
+    fn uniform(value: T) -> Self;
+}
+
+pub trait Brush<C, G>
+where
+    C: Content + FromCell<G>,
+    G: Cell,
+{
+    fn stroke(&self) -> Stroke<C, G>;
+
+    fn fill(&self) -> C;
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Palette<C, G>
+where
+    C: Content + FromCell<G>,
+    G: Cell,
+{
+    pub stroke: Stroke<C, G>,
+    pub fill: C,
+}
+
+impl<C, G> Brush<C, G> for Palette<C, G>
+where
+    Stroke<C, G>: Clone,
+    C: Content + FromCell<G>,
+    G: Cell,
+{
+    fn stroke(&self) -> Stroke<C, G> {
+        self.stroke.clone()
+    }
+
+    fn fill(&self) -> C {
+        self.fill.clone()
     }
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum TerminalCell<G>
+pub struct Stroke<C, G>
 where
+    C: Content + FromCell<G>,
     G: Cell,
 {
-    Only(G),
-    StartEnd(G, G),
+    pub straight: Axial<StraightStroke<C, G>>,
+    pub corner: Quadrant<CornerStroke<G>>,
 }
 
-impl<G> TerminalCell<G>
+pub type CornerStroke<G> = G;
+
+#[derive(Clone, Copy, Debug)]
+pub struct StraightStroke<C, G>
 where
+    C: Content + FromCell<G>,
     G: Cell,
 {
-    pub fn only_or_else<'a>(&'a self, mut f: impl FnMut(&'a G, &'a G) -> &'a G) -> &G {
+    pub only: G,
+    pub middle: C,
+    pub end: Terminal<G>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum Terminal<T> {
+    Only(T),
+    StartEnd(T, T),
+}
+
+impl<T> Terminal<T> {
+    pub fn only_or_else<'a>(&'a self, mut f: impl FnMut(&'a T, &'a T) -> &'a T) -> &T {
         match self {
-            TerminalCell::Only(ref x) => x,
-            TerminalCell::StartEnd(ref start, ref end) => f(start, end),
+            Terminal::Only(ref x) => x,
+            Terminal::StartEnd(ref start, ref end) => f(start, end),
         }
     }
 
-    pub fn start(&self) -> &G {
+    pub fn start(&self) -> &T {
         self.only_or_else(|start, _| start)
     }
 
-    pub fn end(&self) -> &G {
+    pub fn end(&self) -> &T {
         self.only_or_else(|_, end| end)
     }
 }
 
-impl<G> From<G> for TerminalCell<G>
-where
-    G: Cell,
-{
-    fn from(only: G) -> Self {
-        TerminalCell::Only(only)
+impl<T> From<T> for Terminal<T> {
+    fn from(only: T) -> Self {
+        Terminal::Only(only)
     }
 }
 
-impl<G> From<(G, G)> for TerminalCell<G>
-where
-    G: Cell,
-{
-    fn from((start, end): (G, G)) -> Self {
-        TerminalCell::StartEnd(start, end)
+impl<T> From<(T, T)> for Terminal<T> {
+    fn from((start, end): (T, T)) -> Self {
+        Terminal::StartEnd(start, end)
     }
 }
 
@@ -108,43 +166,6 @@ where
                 .join(Block::with_length(length - 2, 1).fill(C::from_cell(middle)))
                 .join(Block::with_content(C::from_cell(terminal.end().clone()))),
         }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct LinePalette<G>
-where
-    G: Cell,
-{
-    pub only: G,
-    pub middle: G,
-    pub terminal: TerminalCell<G>,
-}
-
-impl<G> LinePalette<G>
-where
-    G: Cell + Clone,
-{
-    pub fn uniform(cell: G) -> Self {
-        LinePalette {
-            only: cell.clone(),
-            middle: cell.clone(),
-            terminal: TerminalCell::Only(cell),
-        }
-    }
-}
-
-impl<G> AxialPalette for LinePalette<G>
-where
-    G: Cell,
-{
-    type Output = Self;
-
-    fn aligned_at<A>(self) -> Self::Output
-    where
-        A: Axis,
-    {
-        self
     }
 }
 
