@@ -2,16 +2,13 @@ use std::borrow::Cow;
 use std::cmp;
 use std::io::{self, Write};
 
-use crate::align::{
-    Alignment, AlignmentValue, AxialAlignmentValue, Axis, AxisValue, Bottom, Coaxial, ContraAxial,
-    Left, LeftRight, Right, Top, TopBottom,
-};
+use crate::align::{typed, valued};
 use crate::content::{Congruent, Content, ContentSlice as _, Grapheme, Layer, Style, Styled};
 use crate::Render;
 
 pub trait WithLength<A>: Sized
 where
-    A: Axis,
+    A: typed::Axis,
 {
     fn with_length(length: usize, width: usize) -> Self;
 }
@@ -27,8 +24,8 @@ where
 
 pub trait Join<A, L>: Sized
 where
-    A: Axis,
-    L: ContraAxial<A>,
+    A: typed::Axis,
+    L: typed::ContraAxial<A>,
 {
     #[must_use]
     fn join(self, other: Self) -> Self;
@@ -36,7 +33,7 @@ where
 
 pub trait Pad<L>: Sized
 where
-    L: Alignment,
+    L: typed::Alignment,
 {
     #[must_use]
     fn pad(self, width: usize) -> Self;
@@ -44,31 +41,31 @@ where
 
 pub trait PadToLength<A, L>: Sized
 where
-    A: Axis,
-    L: Coaxial<A>,
+    A: typed::Axis,
+    L: typed::Coaxial<A>,
 {
     #[must_use]
     fn pad_to_length(self, length: usize) -> Self;
 }
 
 pub trait DynamicallyAligned: Sized {
-    fn with_length(axis: AxisValue, length: usize, width: usize) -> Self;
+    fn with_length(axis: valued::Axis, length: usize, width: usize) -> Self;
 
     #[must_use]
-    fn pad(self, alignment: impl Into<AlignmentValue>, length: usize) -> Self;
+    fn pad(self, alignment: impl Into<valued::Alignment>, length: usize) -> Self;
 
     #[must_use]
-    fn pad_to_length(self, alignment: impl Into<AlignmentValue>, length: usize) -> Self;
+    fn pad_to_length(self, alignment: impl Into<valued::Alignment>, length: usize) -> Self;
 
     #[must_use]
-    fn join(self, alignment: AxialAlignmentValue, other: Self) -> Self;
+    fn join(self, alignment: valued::AxialAlignment, other: Self) -> Self;
 }
 
 pub trait StaticallyAligned: Sized {
     fn with_length_at<A>(length: usize, width: usize) -> Self
     where
         Self: WithLength<A>,
-        A: Axis,
+        A: typed::Axis,
     {
         WithLength::with_length(length, width)
     }
@@ -77,7 +74,7 @@ pub trait StaticallyAligned: Sized {
     fn pad_at<L>(self, length: usize) -> Self
     where
         Self: Pad<L>,
-        L: Alignment,
+        L: typed::Alignment,
     {
         Pad::pad(self, length)
     }
@@ -86,8 +83,8 @@ pub trait StaticallyAligned: Sized {
     fn pad_to_length_at<A, L>(self, length: usize) -> Self
     where
         Self: PadToLength<A, L>,
-        A: Axis,
-        L: Coaxial<A>,
+        A: typed::Axis,
+        L: typed::Coaxial<A>,
     {
         PadToLength::pad_to_length(self, length)
     }
@@ -96,8 +93,8 @@ pub trait StaticallyAligned: Sized {
     fn join_at<A, L>(self, other: Self) -> Self
     where
         Self: Join<A, L>,
-        A: Axis,
-        L: ContraAxial<A>,
+        A: typed::Axis,
+        L: typed::ContraAxial<A>,
     {
         Join::join(self, other)
     }
@@ -824,8 +821,8 @@ impl<C> DynamicallyAligned for Block<C>
 where
     C: Content,
 {
-    fn with_length(axis: AxisValue, length: usize, width: usize) -> Self {
-        use crate::align::AxisValue as Axis;
+    fn with_length(axis: valued::Axis, length: usize, width: usize) -> Self {
+        use crate::align::valued::Axis;
 
         match axis {
             Axis::LeftRight => Block::with_dimensions(length, width),
@@ -833,8 +830,8 @@ where
         }
     }
 
-    fn pad(self, alignment: impl Into<AlignmentValue>, length: usize) -> Self {
-        use crate::align::AlignmentValue as Alignment;
+    fn pad(self, alignment: impl Into<valued::Alignment>, length: usize) -> Self {
+        use crate::align::valued::Alignment;
 
         match alignment.into() {
             Alignment::LEFT => self.pad_at_left(length),
@@ -844,8 +841,8 @@ where
         }
     }
 
-    fn pad_to_length(self, alignment: impl Into<AlignmentValue>, length: usize) -> Self {
-        use crate::align::AlignmentValue as Alignment;
+    fn pad_to_length(self, alignment: impl Into<valued::Alignment>, length: usize) -> Self {
+        use crate::align::valued::Alignment;
 
         match alignment.into() {
             Alignment::LEFT => self.pad_to_width_at_left(length),
@@ -855,8 +852,8 @@ where
         }
     }
 
-    fn join(self, alignment: AxialAlignmentValue, other: Self) -> Self {
-        use crate::align::AxialAlignmentValue as AxialAlignment;
+    fn join(self, alignment: valued::AxialAlignment, other: Self) -> Self {
+        use crate::align::valued::AxialAlignment;
 
         match alignment {
             AxialAlignment::LEFT_RIGHT_AT_TOP => self.join_left_to_right_at_top(other),
@@ -916,7 +913,7 @@ where
     }
 }
 
-impl<C> Join<LeftRight, Bottom> for Block<C>
+impl<C> Join<typed::LeftRight, typed::Bottom> for Block<C>
 where
     C: Content,
 {
@@ -925,7 +922,7 @@ where
     }
 }
 
-impl<C> Join<LeftRight, Top> for Block<C>
+impl<C> Join<typed::LeftRight, typed::Top> for Block<C>
 where
     C: Content,
 {
@@ -934,7 +931,7 @@ where
     }
 }
 
-impl<C> Join<TopBottom, Left> for Block<C>
+impl<C> Join<typed::TopBottom, typed::Left> for Block<C>
 where
     C: Content,
 {
@@ -943,7 +940,7 @@ where
     }
 }
 
-impl<C> Join<TopBottom, Right> for Block<C>
+impl<C> Join<typed::TopBottom, typed::Right> for Block<C>
 where
     C: Content,
 {
@@ -952,7 +949,7 @@ where
     }
 }
 
-impl<C> Pad<Bottom> for Block<C>
+impl<C> Pad<typed::Bottom> for Block<C>
 where
     C: Content,
 {
@@ -961,7 +958,7 @@ where
     }
 }
 
-impl<C> Pad<Left> for Block<C>
+impl<C> Pad<typed::Left> for Block<C>
 where
     C: Content,
 {
@@ -970,7 +967,7 @@ where
     }
 }
 
-impl<C> Pad<Right> for Block<C>
+impl<C> Pad<typed::Right> for Block<C>
 where
     C: Content,
 {
@@ -979,7 +976,7 @@ where
     }
 }
 
-impl<C> Pad<Top> for Block<C>
+impl<C> Pad<typed::Top> for Block<C>
 where
     C: Content,
 {
@@ -988,7 +985,7 @@ where
     }
 }
 
-impl<C> PadToLength<LeftRight, Left> for Block<C>
+impl<C> PadToLength<typed::LeftRight, typed::Left> for Block<C>
 where
     C: Content,
 {
@@ -997,7 +994,7 @@ where
     }
 }
 
-impl<C> PadToLength<LeftRight, Right> for Block<C>
+impl<C> PadToLength<typed::LeftRight, typed::Right> for Block<C>
 where
     C: Content,
 {
@@ -1006,7 +1003,7 @@ where
     }
 }
 
-impl<C> PadToLength<TopBottom, Bottom> for Block<C>
+impl<C> PadToLength<typed::TopBottom, typed::Bottom> for Block<C>
 where
     C: Content,
 {
@@ -1015,7 +1012,7 @@ where
     }
 }
 
-impl<C> PadToLength<TopBottom, Top> for Block<C>
+impl<C> PadToLength<typed::TopBottom, typed::Top> for Block<C>
 where
     C: Content,
 {
@@ -1055,7 +1052,7 @@ where
 
 impl<C> StaticallyAligned for Block<C> where C: Content {}
 
-impl<C> WithLength<LeftRight> for Block<C>
+impl<C> WithLength<typed::LeftRight> for Block<C>
 where
     C: Content,
 {
@@ -1064,7 +1061,7 @@ where
     }
 }
 
-impl<C> WithLength<TopBottom> for Block<C>
+impl<C> WithLength<typed::TopBottom> for Block<C>
 where
     C: Content,
 {
