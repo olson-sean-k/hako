@@ -1,7 +1,7 @@
 mod decoder;
 
 use crate::align::typed::decoder::{AxialDecoder, HorizontalDecoder, VerticalDecoder};
-use crate::align::{valued, AxiallyAligned, HorizontallyAligned, VerticallyAligned};
+use crate::align::{valued, AxialEnvelope, HorizontalEnvelope, VerticalEnvelope};
 
 pub type OrthogonalOrigin<A> = <<A as Axis>::Orthogonal as Axis>::Origin;
 
@@ -16,7 +16,7 @@ pub enum LeftRight {}
 pub enum TopBottom {}
 
 impl AxialDecoder for LeftRight {
-    fn aligned<T>(data: &impl AxiallyAligned<T>) -> &T {
+    fn aligned<T>(data: &impl AxialEnvelope<T>) -> &T {
         data.horizontal()
     }
 }
@@ -29,7 +29,7 @@ impl Axis for LeftRight {
 }
 
 impl AxialDecoder for TopBottom {
-    fn aligned<T>(data: &impl AxiallyAligned<T>) -> &T {
+    fn aligned<T>(data: &impl AxialEnvelope<T>) -> &T {
         data.vertical()
     }
 }
@@ -41,7 +41,7 @@ impl Axis for TopBottom {
     const VALUE: valued::Axis = valued::Axis::TopBottom;
 }
 
-pub trait Alignment {
+pub trait Alignment: Sized {
     type Opposite: Coaxial<Self::Axis>;
     type Axis: Axis;
 
@@ -78,7 +78,7 @@ impl Alignment for Left {
 }
 
 impl HorizontalDecoder for Left {
-    fn aligned<T>(data: &impl HorizontallyAligned<T>) -> &T {
+    fn aligned<T>(data: &impl HorizontalEnvelope<T>) -> &T {
         data.left()
     }
 }
@@ -91,7 +91,7 @@ impl Alignment for Right {
 }
 
 impl HorizontalDecoder for Right {
-    fn aligned<T>(data: &impl HorizontallyAligned<T>) -> &T {
+    fn aligned<T>(data: &impl HorizontalEnvelope<T>) -> &T {
         data.right()
     }
 }
@@ -104,7 +104,7 @@ impl Alignment for Top {
 }
 
 impl VerticalDecoder for Top {
-    fn aligned<T>(data: &impl VerticallyAligned<T>) -> &T {
+    fn aligned<T>(data: &impl VerticalEnvelope<T>) -> &T {
         data.top()
     }
 }
@@ -117,7 +117,7 @@ impl Alignment for Bottom {
 }
 
 impl VerticalDecoder for Bottom {
-    fn aligned<T>(data: &impl VerticallyAligned<T>) -> &T {
+    fn aligned<T>(data: &impl VerticalEnvelope<T>) -> &T {
         data.bottom()
     }
 }

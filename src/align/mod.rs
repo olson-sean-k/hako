@@ -1,12 +1,12 @@
 pub mod typed;
 pub mod valued;
 
-pub trait HorizontallyAligned<T>: Sized {
+pub trait HorizontalEnvelope<T>: Sized {
     fn left(&self) -> &T;
 
     fn right(&self) -> &T;
 
-    fn aligned_at<H>(&self) -> &T
+    fn horizontally_aligned_at<H>(&self) -> &T
     where
         H: typed::HorizontalAlignment,
     {
@@ -14,12 +14,12 @@ pub trait HorizontallyAligned<T>: Sized {
     }
 }
 
-pub trait VerticallyAligned<T>: Sized {
+pub trait VerticalEnvelope<T>: Sized {
     fn top(&self) -> &T;
 
     fn bottom(&self) -> &T;
 
-    fn aligned_at<V>(&self) -> &T
+    fn vertically_aligned_at<V>(&self) -> &T
     where
         V: typed::VerticalAlignment,
     {
@@ -27,12 +27,12 @@ pub trait VerticallyAligned<T>: Sized {
     }
 }
 
-pub trait AxiallyAligned<T>: Sized {
+pub trait AxialEnvelope<T>: Sized {
     fn horizontal(&self) -> &T;
 
     fn vertical(&self) -> &T;
 
-    fn aligned_at<A>(&self) -> &T
+    fn axially_aligned_at<A>(&self) -> &T
     where
         A: typed::Axis,
     {
@@ -54,17 +54,20 @@ impl<T> Horizontal<T> {
         }
     }
 
-    pub fn with<H, U, F>(&self, mut f: F) -> U
+    pub fn fold_horizontally_at<H, U, F>(&self, mut f: F) -> U
     where
         H: typed::HorizontalAlignment,
         H::Opposite: typed::HorizontalAlignment,
         F: FnMut(&T, &T) -> U,
     {
-        f(self.aligned_at::<H>(), self.aligned_at::<H::Opposite>())
+        f(
+            self.horizontally_aligned_at::<H>(),
+            self.horizontally_aligned_at::<H::Opposite>(),
+        )
     }
 }
 
-impl<T> HorizontallyAligned<T> for Horizontal<T> {
+impl<T> HorizontalEnvelope<T> for Horizontal<T> {
     fn left(&self) -> &T {
         &self.left
     }
@@ -88,17 +91,20 @@ impl<T> Vertical<T> {
         }
     }
 
-    pub fn with<V, U, F>(&self, mut f: F) -> U
+    pub fn fold_vertically_at<H, U, F>(&self, mut f: F) -> U
     where
-        V: typed::VerticalAlignment,
-        V::Opposite: typed::VerticalAlignment,
+        H: typed::VerticalAlignment,
+        H::Opposite: typed::VerticalAlignment,
         F: FnMut(&T, &T) -> U,
     {
-        f(self.aligned_at::<V>(), self.aligned_at::<V::Opposite>())
+        f(
+            self.vertically_aligned_at::<H>(),
+            self.vertically_aligned_at::<H::Opposite>(),
+        )
     }
 }
 
-impl<T> VerticallyAligned<T> for Vertical<T> {
+impl<T> VerticalEnvelope<T> for Vertical<T> {
     fn top(&self) -> &T {
         &self.top
     }
@@ -129,7 +135,7 @@ impl<T> Square<T> {
     }
 }
 
-impl<T> HorizontallyAligned<T> for Square<T> {
+impl<T> HorizontalEnvelope<T> for Square<T> {
     fn left(&self) -> &T {
         &self.left
     }
@@ -139,7 +145,7 @@ impl<T> HorizontallyAligned<T> for Square<T> {
     }
 }
 
-impl<T> VerticallyAligned<T> for Square<T> {
+impl<T> VerticalEnvelope<T> for Square<T> {
     fn top(&self) -> &T {
         &self.top
     }
@@ -155,7 +161,7 @@ pub struct Axial<T> {
     pub vertical: T,
 }
 
-impl<T> AxiallyAligned<T> for Axial<T> {
+impl<T> AxialEnvelope<T> for Axial<T> {
     fn horizontal(&self) -> &T {
         &self.horizontal
     }
