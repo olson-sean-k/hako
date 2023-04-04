@@ -48,10 +48,9 @@ where
     fn pad_to_length(self, length: usize) -> Self;
 }
 
-// NOTE: These functions are provided by a trait rather than inherent functions
-//       to avoid ambiguity with the statically aligned traits. For example,
-//       `Pad::pad` and `DynamicallyAligned::pad` are ambiguous with
-//       non-qualified method syntax. Instead, users must choose which functions
+// NOTE: These functions are provided by a trait rather than inherent functions to avoid ambiguity
+//       with the statically aligned traits. For example, `Pad::pad` and `DynamicallyAligned::pad`
+//       are ambiguous with non-qualified method syntax. Instead, users must choose which functions
 //       are in scope.
 pub trait DynamicallyAligned: Sized {
     fn with_length(axis: valued::Axis, length: usize, width: usize) -> Self;
@@ -235,9 +234,8 @@ where
                     .lines
                     .into_iter()
                     .map(|line| {
-                        // This assumes that lines are properly padded such that
-                        // they have equal width (and so no per-line width must
-                        // be computed).
+                        // This assumes that lines are properly padded such that they have equal
+                        // width (and so no per-line width must be computed).
                         Content::concatenate(line, C::space().repeat(width))
                     })
                     .collect(),
@@ -414,13 +412,12 @@ where
                     right
                 }
                 else {
-                    // Pad eagerly to expand the height of the empty block
-                    // beyond zero.
+                    // Pad eagerly to expand the height of the empty block beyond zero.
                     let height = cmp::max(left.height, right.height());
                     let left = left.pad_to_height_at_bottom(height);
                     let right = right.pad_to_height_at_bottom(height);
-                    // Neither the width nor height of the empty block can be
-                    // zero here, so the fill cannot fail.
+                    // Neither the width nor height of the empty block can be zero here, so the
+                    // fill cannot fail.
                     left.fill(Grapheme::SPACE)
                         .unwrap()
                         .join_left_to_right_at_top(right)
@@ -432,13 +429,12 @@ where
                     left
                 }
                 else {
-                    // Pad eagerly to expand the height of the empty block
-                    // beyond zero.
+                    // Pad eagerly to expand the height of the empty block beyond zero.
                     let height = cmp::max(left.height(), right.height);
                     let left = left.pad_to_height_at_bottom(height);
                     let right = right.pad_to_height_at_bottom(height);
-                    // Neither the width nor height of the empty block can be
-                    // zero here, so the fill cannot fail.
+                    // Neither the width nor height of the empty block can be zero here, so the
+                    // fill cannot fail.
                     left.join_left_to_right_at_top(right.fill(Grapheme::SPACE).unwrap())
                 }
                 .into()
@@ -459,13 +455,12 @@ where
                     bottom
                 }
                 else {
-                    // Pad eagerly to expand the width of the empty block beyond
-                    // zero.
+                    // Pad eagerly to expand the width of the empty block beyond zero.
                     let width = cmp::max(top.width, bottom.width());
                     let top = top.pad_to_width_at_right(width);
                     let bottom = bottom.pad_to_width_at_right(width);
-                    // Neither the width nor height of the empty block can be
-                    // zero here, so the fill cannot fail.
+                    // Neither the width nor height of the empty block can be zero here, so the
+                    // fill cannot fail.
                     top.fill(Grapheme::SPACE)
                         .unwrap()
                         .join_top_to_bottom_at_left(bottom)
@@ -477,13 +472,12 @@ where
                     top
                 }
                 else {
-                    // Pad eagerly to expand the width of the empty block beyond
-                    // zero.
+                    // Pad eagerly to expand the width of the empty block beyond zero.
                     let width = cmp::max(top.width(), bottom.width);
                     let top = top.pad_to_width_at_right(width);
                     let bottom = bottom.pad_to_width_at_right(width);
-                    // Neither the width nor height of the empty block can be
-                    // zero here, so the fill cannot fail.
+                    // Neither the width nor height of the empty block can be zero here, so the
+                    // fill cannot fail.
                     top.join_top_to_bottom_at_left(bottom.fill(Grapheme::SPACE).unwrap())
                 }
                 .into()
@@ -517,8 +511,7 @@ where
                 let back = back
                     .pad_to_width_at_right(width)
                     .pad_to_height_at_bottom(height);
-                // The height of the empty block cannot be zero here, so the
-                // fill cannot fail.
+                // The height of the empty block cannot be zero here, so the fill cannot fail.
                 front
                     .fill(Grapheme::SPACE)
                     .unwrap()
@@ -534,8 +527,7 @@ where
                 let back = back
                     .pad_to_width_at_right(width)
                     .pad_to_height_at_bottom(height);
-                // The height of the empty block cannot be zero here, so the
-                // fill cannot fail.
+                // The height of the empty block cannot be zero here, so the fill cannot fail.
                 front
                     .overlay_with(back.fill(Grapheme::SPACE).unwrap(), f)
                     .into()
