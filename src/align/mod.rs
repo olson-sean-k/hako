@@ -69,6 +69,22 @@ impl<T> Horizontal<T> {
     }
 }
 
+impl<T> Horizontal<Vertical<T>> {
+    pub fn transpose(self) -> Vertical<Horizontal<T>> {
+        let Horizontal { left, right } = self;
+        Vertical {
+            top: Horizontal {
+                left: left.top,
+                right: right.top,
+            },
+            bottom: Horizontal {
+                left: left.bottom,
+                right: right.bottom,
+            },
+        }
+    }
+}
+
 impl<T> HorizontalEnvelope<T> for Horizontal<T> {
     fn left(&self) -> &T {
         &self.left
@@ -106,6 +122,22 @@ impl<T> Vertical<T> {
     }
 }
 
+impl<T> Vertical<Horizontal<T>> {
+    pub fn transpose(self) -> Horizontal<Vertical<T>> {
+        let Vertical { top, bottom } = self;
+        Horizontal {
+            left: Vertical {
+                top: top.left,
+                bottom: bottom.left,
+            },
+            right: Vertical {
+                top: top.right,
+                bottom: bottom.right,
+            },
+        }
+    }
+}
+
 impl<T> VerticalEnvelope<T> for Vertical<T> {
     fn top(&self) -> &T {
         &self.top
@@ -115,8 +147,6 @@ impl<T> VerticalEnvelope<T> for Vertical<T> {
         &self.bottom
     }
 }
-
-pub type Cornered<T> = Vertical<Horizontal<T>>;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Square<T> {
@@ -154,6 +184,38 @@ impl<T> VerticalEnvelope<T> for Square<T> {
 
     fn bottom(&self) -> &T {
         &self.bottom
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Quadrant<T> {
+    pub top: Horizontal<T>,
+    pub bottom: Horizontal<T>,
+}
+
+impl<T> Quadrant<T> {
+    pub fn aligned(
+        &self,
+        vertical: valued::VerticalAlignment,
+        horizontal: valued::HorizontalAlignment,
+    ) -> &T {
+        match vertical {
+            valued::VerticalAlignment::Top => self.top.aligned(horizontal),
+            valued::VerticalAlignment::Bottom => self.bottom.aligned(horizontal),
+        }
+    }
+}
+
+impl<T> From<Horizontal<Vertical<T>>> for Quadrant<T> {
+    fn from(horizontal: Horizontal<Vertical<T>>) -> Self {
+        horizontal.transpose().into()
+    }
+}
+
+impl<T> From<Vertical<Horizontal<T>>> for Quadrant<T> {
+    fn from(vertical: Vertical<Horizontal<T>>) -> Self {
+        let Vertical { top, bottom } = vertical;
+        Quadrant { top, bottom }
     }
 }
 
