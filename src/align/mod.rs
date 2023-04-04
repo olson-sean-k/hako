@@ -1,3 +1,5 @@
+mod decoder;
+
 pub mod typed;
 pub mod valued;
 

@@ -1,6 +1,4 @@
-mod decoder;
-
-use crate::align::typed::decoder::{AxialDecoder, HorizontalDecoder, VerticalDecoder};
+use crate::align::decoder::{AxialDecoder, HorizontalDecoder, VerticalDecoder};
 use crate::align::{valued, AxialEnvelope, HorizontalEnvelope, VerticalEnvelope};
 
 pub type OrthogonalOrigin<A> = <<A as Axis>::Orthogonal as Axis>::Origin;
