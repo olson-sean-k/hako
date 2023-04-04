@@ -9,9 +9,9 @@ pub use crate::block::Block;
 pub use crate::content::{Style, Styled};
 
 pub mod prelude {
-    pub use crate::align::{HorizontalEnvelope as _, VerticalEnvelope as _};
-    pub use crate::block::{Fill, StaticallyAligned as _};
-    pub use crate::Render;
+    pub use crate::align::{AxialEnvelope as _, HorizontalEnvelope as _, VerticalEnvelope as _};
+    pub use crate::block::{Fill as _, StaticallyAligned as _};
+    pub use crate::Render as _;
 }
 
 pub trait Render {
