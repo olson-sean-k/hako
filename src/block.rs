@@ -48,6 +48,11 @@ where
     fn pad_to_length(self, length: usize) -> Self;
 }
 
+// NOTE: These functions are provided by a trait rather than inherent functions
+//       to avoid ambiguity with the statically aligned traits. For example,
+//       `Pad::pad` and `DynamicallyAligned::pad` are ambiguous with
+//       non-qualified method syntax. Instead, users must choose which functions
+//       are in scope.
 pub trait DynamicallyAligned: Sized {
     fn with_length(axis: valued::Axis, length: usize, width: usize) -> Self;
 
@@ -59,45 +64,6 @@ pub trait DynamicallyAligned: Sized {
 
     #[must_use]
     fn join(self, alignment: valued::AxialAlignment, other: Self) -> Self;
-}
-
-pub trait StaticallyAligned: Sized {
-    fn with_length_at<A>(length: usize, width: usize) -> Self
-    where
-        Self: WithLength<A>,
-        A: typed::Axis,
-    {
-        WithLength::with_length(length, width)
-    }
-
-    #[must_use]
-    fn pad_at<L>(self, length: usize) -> Self
-    where
-        Self: Pad<L>,
-        L: typed::Alignment,
-    {
-        Pad::pad(self, length)
-    }
-
-    #[must_use]
-    fn pad_to_length_at<A, L>(self, length: usize) -> Self
-    where
-        Self: PadToLength<A, L>,
-        A: typed::Axis,
-        L: typed::Coaxial<A>,
-    {
-        PadToLength::pad_to_length(self, length)
-    }
-
-    #[must_use]
-    fn join_at<A, L>(self, other: Self) -> Self
-    where
-        Self: Join<A, L>,
-        A: typed::Axis,
-        L: typed::ContraAxial<A>,
-    {
-        Join::join(self, other)
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -796,6 +762,49 @@ where
     }
 }
 
+/// Statically parameterized operations.
+impl<C> Block<C>
+where
+    C: Content,
+{
+    pub fn with_length_at<A>(length: usize, width: usize) -> Self
+    where
+        Self: WithLength<A>,
+        A: typed::Axis,
+    {
+        WithLength::with_length(length, width)
+    }
+
+    #[must_use]
+    pub fn pad_at<L>(self, length: usize) -> Self
+    where
+        Self: Pad<L>,
+        L: typed::Alignment,
+    {
+        Pad::pad(self, length)
+    }
+
+    #[must_use]
+    pub fn pad_to_length_at<A, L>(self, length: usize) -> Self
+    where
+        Self: PadToLength<A, L>,
+        A: typed::Axis,
+        L: typed::Coaxial<A>,
+    {
+        PadToLength::pad_to_length(self, length)
+    }
+
+    #[must_use]
+    pub fn join_at<A, L>(self, other: Self) -> Self
+    where
+        Self: Join<A, L>,
+        A: typed::Axis,
+        L: typed::ContraAxial<A>,
+    {
+        Join::join(self, other)
+    }
+}
+
 impl<'t> Block<Cow<'t, str>> {
     pub fn into_owned(self) -> Block<Cow<'static, str>> {
         Block {
@@ -1049,8 +1058,6 @@ where
         }
     }
 }
-
-impl<C> StaticallyAligned for Block<C> where C: Content {}
 
 impl<C> WithLength<typed::LeftRight> for Block<C>
 where

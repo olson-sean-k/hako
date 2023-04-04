@@ -10,7 +10,7 @@ pub use crate::content::{Style, Styled};
 
 pub mod prelude {
     pub use crate::align::{AxialEnvelope as _, HorizontalEnvelope as _, VerticalEnvelope as _};
-    pub use crate::block::{Fill as _, StaticallyAligned as _};
+    pub use crate::block::Fill as _;
     pub use crate::Render as _;
 }
 
