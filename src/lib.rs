@@ -1,6 +1,10 @@
+mod breadth;
+mod slice;
+
 pub mod align;
 pub mod block;
 pub mod content;
+pub mod text;
 
 use std::borrow::Cow;
 use std::io::{self, Write};
@@ -12,6 +16,10 @@ pub mod prelude {
     pub use crate::align::{AxialEnvelope as _, HorizontalEnvelope as _, VerticalEnvelope as _};
     pub use crate::block::Fill as _;
     pub use crate::Render as _;
+}
+
+mod sealed {
+    pub trait Sealed {}
 }
 
 pub trait Render {

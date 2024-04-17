@@ -65,6 +65,8 @@ pub trait DynamicallyAligned: Sized {
     fn join(self, alignment: valued::AxialAlignment, other: Self) -> Self;
 }
 
+// TODO: Replace this use of the term "empty" with "blank". "Empty" implies zero dimensions (and
+//       `Block::zero` is a bit obtuse may be clearer as `Block::empty`).
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct EmptyBlock {
     width: usize,

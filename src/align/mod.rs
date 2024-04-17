@@ -3,6 +3,10 @@ mod decoder;
 pub mod typed;
 pub mod valued;
 
+// TODO: Provide support for center alignments. Note that this may not be applicable to envelopes.
+// TODO: Envelopes may be niche or, at least, very "low level". Consider pushing them into an
+//       `envelope` module in the public API with some documentation.
+
 pub trait HorizontalEnvelope<T>: Sized {
     fn left(&self) -> &T;
 
