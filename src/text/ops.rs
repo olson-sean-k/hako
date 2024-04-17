@@ -18,8 +18,6 @@ pub trait Overlay<T> {
         F: FnMut(/* ... */) -> MorphemeLayer<Self::Morpheme>;
 }
 
-pub trait TryOverlay<T> {
-}
+pub trait TryOverlay<T> {}
 
-impl<T, U> TryOverlay<U> for T where T: Overlay<U> {
-}
+impl<T, U> TryOverlay<U> for T where T: Overlay<U> {}

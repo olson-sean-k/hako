@@ -86,8 +86,8 @@ pub struct Grapheme<'t> {
 }
 
 impl<'t> Grapheme<'t> {
-    fn unchecked(text: impl Into<Cow<'t, str>>) -> Self {
-        Grapheme { text: text.into() }
+    const fn unchecked(text: Cow<'t, str>) -> Self {
+        Grapheme { text }
     }
 
     pub fn from_point(point: char) -> Grapheme<'static> {
@@ -119,7 +119,7 @@ impl<'t> AsRef<str> for Grapheme<'t> {
 // No single Unicode code point encodes more than one grapheme.
 impl<'t> From<char> for Grapheme<'t> {
     fn from(point: char) -> Self {
-        Grapheme::unchecked(point.to_string())
+        Grapheme::unchecked(point.to_string().into())
     }
 }
 
@@ -221,7 +221,10 @@ impl<'t> Flex<'t> {
     }
 
     pub fn width(&self) -> NonZeroUsize {
-        Grapheme::width(self.as_grapheme())
+        match self {
+            Flex::Narrow(_) => Narrow::WIDTH,
+            Flex::Wide(_) => Wide::WIDTH,
+        }
     }
 
     pub fn as_grapheme(&self) -> &Grapheme<'t> {
@@ -261,9 +264,9 @@ impl<'t> TryFrom<Grapheme<'t>> for Flex<'t> {
     type Error = MorphologyError;
 
     fn try_from(grapheme: Grapheme<'t>) -> Result<Self, Self::Error> {
-        match Unicode::width(&grapheme) {
-            Narrow::WIDTH => Ok(Narrow::unchecked(grapheme).into()),
-            Wide::WIDTH => Ok(Wide::unchecked(grapheme).into()),
+        match NonZeroUsize::new(Unicode::width(&grapheme)) {
+            Some(Narrow::WIDTH) => Ok(Narrow::unchecked(grapheme).into()),
+            Some(Wide::WIDTH) => Ok(Wide::unchecked(grapheme).into()),
             _ => Err(MorphologyError),
         }
     }
@@ -277,15 +280,14 @@ pub struct Narrow<'t> {
 }
 
 impl<'t> Narrow<'t> {
-    pub const WIDTH: usize = 1;
+    // SAFETY: This must not be constructed from `0usize`.
+    pub const WIDTH: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(1) };
 
-    fn unchecked(grapheme: impl Into<Grapheme<'t>>) -> Self {
-        Narrow {
-            grapheme: grapheme.into(),
-        }
+    const fn unchecked(grapheme: Grapheme<'t>) -> Self {
+        Narrow { grapheme }
     }
 
-    pub fn space() -> Narrow<'static> {
+    pub const fn space() -> Narrow<'static> {
         Narrow::unchecked(Grapheme::unchecked(Cow::Borrowed(" ")))
     }
 
@@ -294,10 +296,6 @@ impl<'t> Narrow<'t> {
         Narrow {
             grapheme: grapheme.into_owned(),
         }
-    }
-
-    pub fn width(&self) -> NonZeroUsize {
-        Grapheme::width(&self.grapheme)
     }
 
     pub fn as_grapheme(&self) -> &Grapheme<'t> {
@@ -323,7 +321,7 @@ impl<'t> TryFrom<Grapheme<'t>> for Narrow<'t> {
     type Error = MorphologyError;
 
     fn try_from(grapheme: Grapheme<'t>) -> Result<Self, Self::Error> {
-        if Unicode::width(&grapheme) == Narrow::WIDTH {
+        if Unicode::width(&grapheme) == Narrow::WIDTH.into() {
             Ok(Narrow::unchecked(grapheme))
         }
         else {
@@ -339,7 +337,7 @@ impl<'t> Unicode for Narrow<'t> {
 
     #[inline(always)]
     fn width(&self) -> usize {
-        Narrow::WIDTH
+        Narrow::WIDTH.into()
     }
 }
 
@@ -350,15 +348,14 @@ pub struct Wide<'t> {
 }
 
 impl<'t> Wide<'t> {
-    pub const WIDTH: usize = 2;
+    // SAFETY: This must not be constructed from `0usize`.
+    pub const WIDTH: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(2) };
 
-    fn unchecked(grapheme: impl Into<Grapheme<'t>>) -> Self {
-        Wide {
-            grapheme: grapheme.into(),
-        }
+    const fn unchecked(grapheme: Grapheme<'t>) -> Self {
+        Wide { grapheme }
     }
 
-    pub fn space() -> Wide<'static> {
+    pub const fn space() -> Wide<'static> {
         Wide::unchecked(Grapheme::unchecked(Cow::Borrowed("　")))
     }
 
@@ -367,10 +364,6 @@ impl<'t> Wide<'t> {
         Wide {
             grapheme: grapheme.into_owned(),
         }
-    }
-
-    pub fn width(&self) -> NonZeroUsize {
-        Grapheme::width(&self.grapheme)
     }
 
     pub fn as_grapheme(&self) -> &Grapheme<'t> {
@@ -392,7 +385,7 @@ impl<'t> TryFrom<Grapheme<'t>> for Wide<'t> {
     type Error = MorphologyError;
 
     fn try_from(grapheme: Grapheme<'t>) -> Result<Self, Self::Error> {
-        if Unicode::width(&grapheme) == Wide::WIDTH {
+        if Unicode::width(&grapheme) == Wide::WIDTH.into() {
             Ok(Wide::unchecked(grapheme))
         }
         else {
@@ -408,7 +401,7 @@ impl<'t> Unicode for Wide<'t> {
 
     #[inline(always)]
     fn width(&self) -> usize {
-        Wide::WIDTH
+        Wide::WIDTH.into()
     }
 }
 
@@ -484,8 +477,10 @@ where
         use std::mem;
 
         // TODO: Lifetimes are overcaptured in `Unicode::graphemes`. In this case, the lifetime
-        //       `'t` is captured and so the call to `graphemes` persists even after dropping the
-        //       iterator. The text is coerced to `&'static str` to examine the graphemes instead.
+        //       `'t` is captured and so the borrow through `graphemes` persists even after
+        //       dropping the iterator. The text is coerced to `&'static str` to examine the
+        //       graphemes instead. This is far from ideal, but abstracts over ownership without
+        //       unnecessary cloning.
         //
         //       See https://rust-lang.github.io/rfcs/3498-lifetime-capture-rules-2024.html#overcapturing
         // SAFETY: The transmuted `non_static_inner_text` binding must not escape this function in
