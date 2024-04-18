@@ -6,9 +6,22 @@ use std::convert::Infallible;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
+use std::ops::Range;
 
 use crate::breadth::Breadth;
 use crate::slice::SliceProjection;
+
+const CR: u8 = b'\r';
+const LF: u8 = b'\n';
+
+#[derive(Clone, Copy, Debug)]
+pub struct ControlError;
+
+impl From<Infallible> for ControlError {
+    fn from(_: Infallible) -> Self {
+        unreachable!()
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct MorphologyError;
@@ -16,6 +29,65 @@ pub struct MorphologyError;
 impl From<Infallible> for MorphologyError {
     fn from(_: Infallible) -> Self {
         unreachable!()
+    }
+}
+
+trait StrExt {
+    fn has_ascii_line_breaks(&self) -> bool;
+
+    // TODO: Perhaps cloning can be avoided or deferred by implementing a similar consuming
+    //       function for types like `Cow<str>`.
+    fn split_at_ascii_line_breaks(&self) -> impl '_ + Iterator<Item = &'_ str>;
+}
+
+impl StrExt for str {
+    fn has_ascii_line_breaks(&self) -> bool {
+        // Detect any and all occurences of CR and LF. Note that both CR and LF are considered a
+        // line break even when not adjacent to another control line breaking control character
+        // (i.e., a lone CR).
+        self.as_bytes().iter().copied().any(is_ascii_line_break)
+    }
+
+    // Splits over unpaired CR (unlike `str::lines`). Discards line breaking control characters.
+    // Exlcudes LS and PS, which are in the BMP but not ASCII. While CR and LF are the only line
+    // breaking control characters in ASCII, this function conceptually splits over ASCII control
+    // characters with **mandatory** Unicode line break properties.
+    fn split_at_ascii_line_breaks(&self) -> impl '_ + Iterator<Item = &'_ str> {
+        fn checkpoint(head: &mut usize, index: usize, n: usize) -> Range<usize> {
+            let range = *head..index.saturating_sub(n.saturating_sub(1));
+            *head = index.checked_add(1).expect("overflow in index");
+            range
+        }
+
+        // This implementation depends on CR and LF never occuring as part of a plural code point
+        // sequence in UTF-8. This is not true of all BMP and Unicode line breaking code points!
+        let end = self.len();
+        let mut head = 0;
+        self.as_bytes()
+            .iter()
+            .copied()
+            .enumerate()
+            .peekable()
+            .batching(move |bytes| {
+                loop {
+                    return match bytes.next() {
+                        // Split over CR and CR LF sequences.
+                        Some((index, CR)) => Some(match bytes.peek().copied() {
+                            Some((index, LF)) => {
+                                bytes.next();
+                                checkpoint(&mut head, index, 2)
+                            }
+                            _ => checkpoint(&mut head, index, 1),
+                        }),
+                        // Split over LF.
+                        Some((index, LF)) => Some(checkpoint(&mut head, index, 1)),
+                        Some(_) => continue,
+                        // Yield the remainder at EoT.
+                        None => (head <= end).then(|| checkpoint(&mut head, end, 0)),
+                    };
+                }
+            })
+            .map(|range| self.get(range).expect("invalid UTF-8 slice"))
     }
 }
 
@@ -429,6 +501,14 @@ impl<'t, M> Text<'t, M> {
         }
     }
 
+    pub fn assert<T>(text: T) -> Self
+    where
+        Self: TryFrom<T>,
+        <Self as TryFrom<T>>::Error: Debug,
+    {
+        Text::try_from(text).expect("failed to construct morpheme-encoded text")
+    }
+
     pub fn into_owned(self) -> Text<'static, M> {
         let Text { text, .. } = self;
         Text {
@@ -451,6 +531,47 @@ where
             Ok(text) => text,
             _ => Text::empty(),
         }
+    }
+
+    pub fn try_map_string<F>(self, f: F) -> Result<Self, MorphologyError>
+    where
+        F: FnOnce(Cow<'t, str>) -> Cow<'t, str>,
+    {
+        let Text { text, .. } = self;
+        Text::try_from(f(text))
+    }
+
+    pub fn segments<S>(&self) -> impl '_ + Iterator<Item = Segment<'_, M, S>>
+    where
+        S: Default,
+    {
+        self.text
+            .split_at_ascii_line_breaks()
+            .map(|text| Segment::unchecked(Text::unchecked(text.into()), S::default()))
+    }
+
+    pub fn segments_with_transform<'s, S>(
+        &'s self,
+        transform: S,
+    ) -> impl 's + Iterator<Item = Segment<'s, M, S>>
+    where
+        S: 's + Clone,
+    {
+        self.segments_with(move || transform.clone())
+    }
+
+    // TODO: Without a consuming split function, it is impossible to consume `Text` and yield
+    //       `Segments` (without cloning the data and other awkward API limitations).
+    pub fn segments_with<'s, S, F>(
+        &'s self,
+        mut f: F,
+    ) -> impl 's + Iterator<Item = Segment<'s, M, S>>
+    where
+        F: 's + FnMut() -> S,
+    {
+        self.text
+            .split_at_ascii_line_breaks()
+            .map(move |text| Segment::unchecked(Text::unchecked(text.into()), f()))
     }
 }
 
@@ -533,6 +654,9 @@ impl<'t, M> Unicode for Text<'t, M> {
     }
 }
 
+// TODO: Segments ignore non-ASCII line breaks (by design). Make sure this is documented.
+// TODO: Consider `unicode-linebreak` or something similar if it seems that support for line
+//       breaking Unicode control characters like LS and PS is justified.
 // TODO: The derived implementations do not depend on the type parameter `M`. Implement them
 //       explicitly to reflect this.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -542,23 +666,40 @@ pub struct Segment<'t, M = Flex<'t>, S = ()> {
 }
 
 impl<'t, M, S> Segment<'t, M, S> {
-    pub fn from_text_transform(text: Text<'t, M>, transform: S) -> Self {
-        let mut lines = text.as_str().lines().peekable();
+    const fn unchecked(text: Text<'t, M>, transform: S) -> Self {
+        Segment { text, transform }
+    }
+
+    pub fn try_from_text_with_transform(
+        text: Text<'t, M>,
+        transform: S,
+    ) -> Result<Self, ControlError> {
+        if text.as_ref().has_ascii_line_breaks() {
+            Err(ControlError)
+        }
+        else {
+            Ok(Segment::unchecked(text, transform))
+        }
+    }
+
+    pub fn from_text_or_joined_with_transform(text: Text<'t, M>, transform: S) -> Self {
+        let mut lines = text.as_str().split_at_ascii_line_breaks().peekable();
         let first = lines.next();
         let text = if lines.peek().is_some() {
             Text::unchecked(first.into_iter().chain(lines).join("").into())
         }
         else {
+            drop(lines);
             text
         };
         Segment { text, transform }
     }
 
-    pub fn from_text(text: Text<'t, M>) -> Self
+    pub fn from_text_or_joined(text: Text<'t, M>) -> Self
     where
         S: Default,
     {
-        Segment::from_text_transform(text, S::default())
+        Segment::from_text_or_joined_with_transform(text, S::default())
     }
 
     pub fn into_owned(self) -> Segment<'static, M, S> {
@@ -585,6 +726,12 @@ impl<'t, M, S> Segment<'t, M, S> {
     }
 }
 
+impl<'t, M> Segment<'t, M, ()> {
+    pub const fn empty() -> Self {
+        Segment::unchecked(Text::empty(), ())
+    }
+}
+
 impl<M, S> AsRef<str> for Segment<'_, M, S> {
     fn as_ref(&self) -> &str {
         self.text.as_ref()
@@ -598,12 +745,14 @@ where
     type Morpheme = M;
 }
 
-impl<'t, M, S> From<Text<'t, M>> for Segment<'t, M, S>
+impl<'t, M, S> TryFrom<Text<'t, M>> for Segment<'t, M, S>
 where
     S: Default,
 {
-    fn from(text: Text<'t, M>) -> Self {
-        Segment::from_text(text)
+    type Error = ControlError;
+
+    fn try_from(text: Text<'t, M>) -> Result<Self, Self::Error> {
+        Segment::try_from_text_with_transform(text, S::default())
     }
 }
 
@@ -627,6 +776,12 @@ pub struct Line<'t, M = Flex<'t>, S = ()> {
 }
 
 impl<'t, M, S> Line<'t, M, S> {
+    pub const fn empty() -> Self {
+        Line {
+            segments: Vec::new(),
+        }
+    }
+
     pub fn into_owned(self) -> Line<'static, M, S> {
         let Line { segments } = self;
         Line {
@@ -648,6 +803,14 @@ impl<'t, M, S> Line<'t, M, S> {
             0 => "".into(),
             1 => segments.get(0).unwrap().as_str().into(),
             _ => segments.iter().map(Segment::as_str).join("").into(),
+        }
+    }
+}
+
+impl<M, S> Default for Line<'_, M, S> {
+    fn default() -> Self {
+        Line {
+            segments: Default::default(),
         }
     }
 }
@@ -688,6 +851,10 @@ impl<M, S> Unicode for Line<'_, M, S> {
     }
 }
 
+fn is_ascii_line_break(byte: u8) -> bool {
+    matches!(byte, CR | LF)
+}
+
 fn annex11_point_width_ambiguous_non_cjk(point: char) -> usize {
     use unicode_width::UnicodeWidthChar;
 
@@ -706,4 +873,28 @@ fn annex29_text_grapheme_segmentation(text: &str) -> impl '_ + Iterator<Item = G
     UnicodeSegmentation::graphemes(text, true)
         .map(Cow::from)
         .map(Grapheme::unchecked)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::text::StrExt as _;
+
+    #[test]
+    fn split_at_ascii_line_breaks() {
+        fn lines(text: &str) -> Vec<&str> {
+            text.split_at_ascii_line_breaks().collect()
+        }
+
+        assert_eq!(lines(""), vec![""]);
+        assert_eq!(lines("\n"), vec!["", ""]);
+        assert_eq!(lines("a\nb"), vec!["a", "b"]);
+        assert_eq!(lines("a\r\nb"), vec!["a", "b"]);
+        assert_eq!(lines("a\r\r\nb"), vec!["a", "", "b"]);
+        assert_eq!(lines("a\n\rb"), vec!["a", "", "b"]);
+        assert_eq!(lines("a\r\r\n\r\nb"), vec!["a", "", "", "b"]);
+        assert_eq!(lines("\na"), vec!["", "a"]);
+        assert_eq!(lines("\n\na"), vec!["", "", "a"]);
+        assert_eq!(lines("a\n"), vec!["a", ""]);
+        assert_eq!(lines("a\n\n"), vec!["a", "", ""]);
+    }
 }
