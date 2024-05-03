@@ -6,6 +6,10 @@ use crate::align::{typed, valued};
 use crate::content::{Congruent, Content, ContentSlice as _, Grapheme, Layer, Style, Styled};
 use crate::Render;
 
+// TODO: Here or in a higher-level crate, provide a `Block::from_natural_text` API that, among
+//       other things, supports line wrapping, bi-directional text, and other formatting features
+//       for accepting natural writing (as opposed to, say, UI elements and DRO).
+
 pub trait WithLength<A>: Sized
 where
     A: typed::Axis,

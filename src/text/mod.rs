@@ -11,6 +11,8 @@ use std::ops::Range;
 use crate::breadth::Breadth;
 use crate::slice::SliceProjection;
 
+// TODO: Use "uax" isntead of "annex".
+
 const CR: u8 = b'\r';
 const LF: u8 = b'\n';
 
@@ -30,6 +32,85 @@ impl From<Infallible> for MorphologyError {
     fn from(_: Infallible) -> Self {
         unreachable!()
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct BoundaryError;
+
+impl From<Infallible> for BoundaryError {
+    fn from(_: Infallible) -> Self {
+        unreachable!()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct Indexed<T> {
+    pub index: usize,
+    pub text: T,
+}
+
+impl<T> Indexed<T> {
+    pub fn zero(text: T) -> Self {
+        Indexed { index: 0, text }
+    }
+
+    pub fn into_text(self) -> T {
+        self.text
+    }
+
+    pub fn map<U, F>(self, f: F) -> Indexed<U>
+    where
+        F: FnOnce(T) -> U,
+    {
+        let Indexed { index, text } = self;
+        Indexed {
+            index,
+            text: f(text),
+        }
+    }
+
+    pub fn as_ref(&self) -> Indexed<&T> {
+        Indexed {
+            index: self.index,
+            text: &self.text,
+        }
+    }
+
+    pub fn as_mut(&mut self) -> Indexed<&mut T> {
+        Indexed {
+            index: self.index,
+            text: &mut self.text,
+        }
+    }
+}
+
+impl<T> Indexed<Option<T>> {
+    pub fn transpose(self) -> Option<Indexed<T>> {
+        let Indexed { index, text } = self;
+        text.map(|text| Indexed { index, text })
+    }
+}
+
+impl<T, E> Indexed<Result<T, E>> {
+    pub fn transpose(self) -> Result<Indexed<T>, E> {
+        let Indexed { index, text } = self;
+        text.map(|text| Indexed { index, text })
+    }
+}
+
+impl<T> From<(usize, T)> for Indexed<T> {
+    fn from((index, text): (usize, T)) -> Self {
+        Indexed { index, text }
+    }
+}
+
+trait NonZeroUsizeExt {
+    const ONE: Self;
+}
+
+impl NonZeroUsizeExt for NonZeroUsize {
+    // SAFETY: The input `usize` is never zero (it is always the literal `1`).
+    const ONE: Self = unsafe { NonZeroUsize::new_unchecked(1) };
 }
 
 trait StrExt {
@@ -91,8 +172,12 @@ impl StrExt for str {
     }
 }
 
+// TODO: Is there a better name for this? This is implemented a bit too broadly to function as a
+//       typical extension trait (i.e., `StrExt`), but `str` and friends are already Unicode.
+//       Moreoever, this trait adopts specific answers to somewhat ambiguous questions in Unicode,
+//       especially `width`.
 pub trait Unicode {
-    fn graphemes(&self) -> impl '_ + Iterator<Item = Grapheme<'_>>;
+    fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Grapheme<'_>>>;
 
     fn width(&self) -> usize;
 }
@@ -102,7 +187,7 @@ where
     T: ?Sized + SliceProjection,
     T::Item: Unicode,
 {
-    fn graphemes(&self) -> impl '_ + Iterator<Item = Grapheme<'_>> {
+    fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Grapheme<'_>>> {
         self.iter().flat_map(|unicode| unicode.graphemes())
     }
 
@@ -111,19 +196,9 @@ where
     }
 }
 
-impl Unicode for str {
-    fn graphemes(&self) -> impl '_ + Iterator<Item = Grapheme<'_>> {
-        annex29_text_grapheme_segmentation(self)
-    }
-
-    fn width(&self) -> usize {
-        annex11_text_width_ambiguous_non_cjk(self)
-    }
-}
-
 impl Unicode for char {
-    fn graphemes(&self) -> impl '_ + Iterator<Item = Grapheme<'_>> {
-        Some(Grapheme::from(*self)).into_iter()
+    fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Grapheme<'_>>> {
+        Some(Indexed::zero(Grapheme::from(*self))).into_iter()
     }
 
     fn width(&self) -> usize {
@@ -132,7 +207,7 @@ impl Unicode for char {
 }
 
 impl<'t> Unicode for Cow<'t, str> {
-    fn graphemes(&self) -> impl '_ + Iterator<Item = Grapheme<'_>> {
+    fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Grapheme<'_>>> {
         self.as_ref().graphemes()
     }
 
@@ -141,8 +216,18 @@ impl<'t> Unicode for Cow<'t, str> {
     }
 }
 
+impl Unicode for str {
+    fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Grapheme<'_>>> {
+        annex29_text_grapheme_segmentation(self)
+    }
+
+    fn width(&self) -> usize {
+        annex11_text_width_ambiguous_non_cjk(self)
+    }
+}
+
 impl Unicode for String {
-    fn graphemes(&self) -> impl '_ + Iterator<Item = Grapheme<'_>> {
+    fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Grapheme<'_>>> {
         self.as_str().graphemes()
     }
 
@@ -246,7 +331,7 @@ impl<'t> TryFrom<String> for Grapheme<'t> {
 }
 
 impl<'t> Unicode for Grapheme<'t> {
-    fn graphemes(&self) -> impl '_ + Iterator<Item = Grapheme<'_>> {
+    fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Grapheme<'_>>> {
         self.as_ref().graphemes()
     }
 
@@ -258,9 +343,13 @@ impl<'t> Unicode for Grapheme<'t> {
 pub trait Encoded: Unicode {
     type Morpheme: Morpheme;
 
-    fn morphemes(&self) -> impl '_ + Iterator<Item = Annex11<'_, Self::Morpheme>> {
+    fn morphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Annex11<'_, Self::Morpheme>>> {
         self.graphemes()
-            .map(Annex11::<Self::Morpheme>::try_from)
+            .map(|grapheme| {
+                grapheme
+                    .map(Annex11::<Self::Morpheme>::try_from)
+                    .transpose()
+            })
             .map(move |morpheme| match morpheme {
                 Ok(morpheme) => morpheme,
                 _ => panic!("non-morpheme in text"),
@@ -276,8 +365,35 @@ where
     type Morpheme = <T::Item as Encoded>::Morpheme;
 }
 
-pub trait Morpheme {
-    type Annex11<'t>: Into<Flex<'t>> + TryFrom<Grapheme<'t>>;
+// Count of columns and rows of some text. This is somewhat general, but generally considers line
+// breaks.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct BoundingBox {
+    pub width: usize,
+    pub height: NonZeroUsize,
+}
+
+// NOTE: This is not mutually exclusive with `BlockLayout`. For example, `Line` is designed to be
+//       composed into a `Block` and implements `BlockLayout`, but it only ever consists of a
+//       single line of text. This makes it compatible with linear operations.
+//
+//       This is only true where inputs and outputs are the same; a morphism **may be** okay, but a
+//       transform is not. The layout traits both work this way: they only apply to closed
+//       operations. This should be in the trait documentation.
+pub trait LinearLayout: Encoded {}
+
+pub trait BlockLayout: Encoded {
+    // NOTE: It is important to keep these kinds of bounds distinct from `Unicode::width`,
+    //       `str::len`, etc.! These functions should **always** consider the complete text as a
+    //       sum. Here, ASCII line breaks are used to consider the structure of the text, and so
+    //       the width bound is a maximum by line. Imagine if `str::len` or some other `len`
+    //       function did this: it would be quite confusing. Do not conflate these concepts in
+    //       APIs.
+    fn ascii_line_break_bounds(&self) -> BoundingBox;
+}
+
+pub trait Morpheme: Sized {
+    type Annex11<'t>: AsRef<str> + Into<Flex<'t>> + TryFrom<Grapheme<'t>>;
 }
 
 pub type Annex11<'t, M> = <M as Morpheme>::Annex11<'t>;
@@ -352,8 +468,7 @@ pub struct Narrow<'t> {
 }
 
 impl<'t> Narrow<'t> {
-    // SAFETY: This must not be constructed from `0usize`.
-    pub const WIDTH: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(1) };
+    pub const WIDTH: NonZeroUsize = NonZeroUsize::ONE;
 
     const fn unchecked(grapheme: Grapheme<'t>) -> Self {
         Narrow { grapheme }
@@ -403,7 +518,7 @@ impl<'t> TryFrom<Grapheme<'t>> for Narrow<'t> {
 }
 
 impl<'t> Unicode for Narrow<'t> {
-    fn graphemes(&self) -> impl '_ + Iterator<Item = Grapheme<'_>> {
+    fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Grapheme<'_>>> {
         self.grapheme.graphemes()
     }
 
@@ -420,7 +535,7 @@ pub struct Wide<'t> {
 }
 
 impl<'t> Wide<'t> {
-    // SAFETY: This must not be constructed from `0usize`.
+    // SAFETY: The input `usize` is never zero (it is always the literal `2`).
     pub const WIDTH: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(2) };
 
     const fn unchecked(grapheme: Grapheme<'t>) -> Self {
@@ -467,7 +582,7 @@ impl<'t> TryFrom<Grapheme<'t>> for Wide<'t> {
 }
 
 impl<'t> Unicode for Wide<'t> {
-    fn graphemes(&self) -> impl '_ + Iterator<Item = Grapheme<'_>> {
+    fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Grapheme<'_>>> {
         self.grapheme.graphemes()
     }
 
@@ -562,6 +677,10 @@ where
 
     // TODO: Without a consuming split function, it is impossible to consume `Text` and yield
     //       `Segments` (without cloning the data and other awkward API limitations).
+    //
+    //       Eh, this requires allocation for text representations where lines are not structural
+    //       (i.e., any bog standard string... so basically everything). Just clone/allocate. It'll
+    //       have to happen anyway.
     pub fn segments_with<'s, S, F>(
         &'s self,
         mut f: F,
@@ -572,6 +691,61 @@ where
         self.text
             .split_at_ascii_line_breaks()
             .map(move |text| Segment::unchecked(Text::unchecked(text.into()), f()))
+    }
+
+    // This indirection is very intentional. `Text` is non-structural w.r.t. lines: it is just text
+    // and line breaks are encoded inline as code points. In other words, it is not designed for
+    // block layout. This function is an **explicit** way to interpret it as such (and only through
+    // a borrow).
+    pub fn as_block_layout(&self) -> impl '_ + BlockLayout {
+        #[derive(Debug)]
+        struct AsBlockLayout<'t, M>(&'t Text<'t, M>);
+
+        impl<M> BlockLayout for AsBlockLayout<'_, M>
+        where
+            M: Morpheme,
+        {
+            fn ascii_line_break_bounds(&self) -> BoundingBox {
+                let mut count = 0;
+                let width = self
+                    .0
+                    .text
+                    .split_at_ascii_line_breaks()
+                    .enumerate()
+                    .map(|(index, line)| {
+                        count = index;
+                        line
+                    })
+                    .map(|line| line.width())
+                    .max()
+                    .unwrap_or(0);
+                BoundingBox {
+                    width,
+                    // SAFETY: The input `usize` is never zero, because it is the result of a
+                    //         saturating addition with one.
+                    height: unsafe { NonZeroUsize::new_unchecked(count.saturating_add(1)) },
+                }
+            }
+        }
+
+        impl<M> Encoded for AsBlockLayout<'_, M>
+        where
+            M: Morpheme,
+        {
+            type Morpheme = M;
+        }
+
+        impl<M> Unicode for AsBlockLayout<'_, M> {
+            fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Grapheme<'_>>> {
+                self.0.graphemes()
+            }
+
+            fn width(&self) -> usize {
+                self.0.width()
+            }
+        }
+
+        AsBlockLayout(self)
     }
 }
 
@@ -587,6 +761,8 @@ where
 {
     type Morpheme = M;
 }
+
+impl<M> LinearLayout for Text<'_, M> where M: Morpheme {}
 
 impl<'t, M> TryFrom<Cow<'t, str>> for Text<'t, M>
 where
@@ -611,6 +787,7 @@ where
             unsafe { mem::transmute::<&'_ str, &'static str>(text.as_ref()) };
         if non_static_inner_text
             .graphemes()
+            .map(Indexed::into_text)
             .map(Annex11::<M>::try_from)
             .all(|morpheme| morpheme.is_ok())
         {
@@ -645,7 +822,7 @@ where
 }
 
 impl<'t, M> Unicode for Text<'t, M> {
-    fn graphemes(&self) -> impl '_ + Iterator<Item = Grapheme<'_>> {
+    fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Grapheme<'_>>> {
         self.as_ref().graphemes()
     }
 
@@ -738,12 +915,27 @@ impl<M, S> AsRef<str> for Segment<'_, M, S> {
     }
 }
 
+impl<M, S> BlockLayout for Segment<'_, M, S>
+where
+    M: Morpheme,
+{
+    fn ascii_line_break_bounds(&self) -> BoundingBox {
+        BoundingBox {
+            width: self.width(),
+            // This type explicitly rejects any and all line breaks.
+            height: NonZeroUsize::ONE,
+        }
+    }
+}
+
 impl<M, S> Encoded for Segment<'_, M, S>
 where
     M: Morpheme,
 {
     type Morpheme = M;
 }
+
+impl<M, S> LinearLayout for Segment<'_, M, S> where M: Morpheme {}
 
 impl<'t, M, S> TryFrom<Text<'t, M>> for Segment<'t, M, S>
 where
@@ -757,7 +949,7 @@ where
 }
 
 impl<M, S> Unicode for Segment<'_, M, S> {
-    fn graphemes(&self) -> impl '_ + Iterator<Item = Grapheme<'_>> {
+    fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Grapheme<'_>>> {
         self.text.graphemes()
     }
 
@@ -807,6 +999,19 @@ impl<'t, M, S> Line<'t, M, S> {
     }
 }
 
+impl<M, S> BlockLayout for Line<'_, M, S>
+where
+    M: Morpheme,
+{
+    fn ascii_line_break_bounds(&self) -> BoundingBox {
+        BoundingBox {
+            width: self.width(),
+            // This type explicitly rejects any and all line breaks.
+            height: NonZeroUsize::ONE,
+        }
+    }
+}
+
 impl<M, S> Default for Line<'_, M, S> {
     fn default() -> Self {
         Line {
@@ -821,9 +1026,11 @@ where
 {
     type Morpheme = M;
 
-    fn morphemes(&self) -> impl '_ + Iterator<Item = Annex11<'_, Self::Morpheme>> {
-        self.segments.as_slice().morphemes()
-    }
+    // TODO: What does this implementation accomplish (over the default)? (Really) remove this if
+    //       there is no meaningful benefit.
+    //fn morphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Annex11<'_, Self::Morpheme>>> {
+    //    self.segments.as_slice().morphemes()
+    //}
 }
 
 impl<'t, M, S> From<Vec<Segment<'t, M, S>>> for Line<'t, M, S> {
@@ -841,8 +1048,10 @@ impl<'t, M, S> FromIterator<Segment<'t, M, S>> for Line<'t, M, S> {
     }
 }
 
+impl<M, S> LinearLayout for Line<'_, M, S> where M: Morpheme {}
+
 impl<M, S> Unicode for Line<'_, M, S> {
-    fn graphemes(&self) -> impl '_ + Iterator<Item = Grapheme<'_>> {
+    fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Grapheme<'_>>> {
         self.segments.as_slice().graphemes()
     }
 
@@ -861,18 +1070,25 @@ fn annex11_point_width_ambiguous_non_cjk(point: char) -> usize {
     UnicodeWidthChar::width(point).unwrap_or(0)
 }
 
+// Here, "ambiguous non-CJK" means that UAX11 ambiguous graphemes are assigned the "non-CJK" column
+// width of one (rather than two, which is typically more compatible in CJK contexts). Generally,
+// ambiguous and halfwidth graphemes are both mapped to narrow morphemes and are treated the same.
 fn annex11_text_width_ambiguous_non_cjk(text: &str) -> usize {
     use unicode_width::UnicodeWidthStr;
 
+    // NOTE: This considers some potentially troublesome ASCII whitespace characters as zero-width,
+    //       which works well here! For example, TAB is zero-width and so is not a morpheme.
     UnicodeWidthStr::width(text)
 }
 
-fn annex29_text_grapheme_segmentation(text: &str) -> impl '_ + Iterator<Item = Grapheme<'_>> {
+fn annex29_text_grapheme_segmentation(
+    text: &str,
+) -> impl '_ + Clone + Iterator<Item = Indexed<Grapheme<'_>>> {
     use unicode_segmentation::UnicodeSegmentation;
 
-    UnicodeSegmentation::graphemes(text, true)
-        .map(Cow::from)
-        .map(Grapheme::unchecked)
+    UnicodeSegmentation::grapheme_indices(text, true)
+        .map(Indexed::from)
+        .map(|grapheme| grapheme.map(Cow::from).map(Grapheme::unchecked))
 }
 
 #[cfg(test)]

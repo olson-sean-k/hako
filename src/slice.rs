@@ -22,7 +22,7 @@ pub trait SliceProjection: Index<usize, Output = Self::Item> {
 
     fn get(&self, index: usize) -> Option<&Self::Item>;
 
-    fn iter(&self) -> impl '_ + Iterator<Item = &'_ Self::Item>;
+    fn iter(&self) -> impl '_ + Clone + Iterator<Item = &'_ Self::Item>;
 
     fn len(&self) -> usize;
 
@@ -38,7 +38,7 @@ impl<T> SliceProjection for [T] {
         self.get(index)
     }
 
-    fn iter(&self) -> impl '_ + Iterator<Item = &'_ Self::Item> {
+    fn iter(&self) -> impl '_ + Clone + Iterator<Item = &'_ Self::Item> {
         self.iter()
     }
 
@@ -76,7 +76,7 @@ where
         self.slice.get(index).map(|item| (self.f)(item))
     }
 
-    fn iter(&self) -> impl '_ + Iterator<Item = &'_ Self::Item> {
+    fn iter(&self) -> impl '_ + Clone + Iterator<Item = &'_ Self::Item> {
         self.slice.iter().map(|item| (self.f)(item))
     }
 
