@@ -340,14 +340,22 @@ impl<'t> Unicode for Grapheme<'t> {
     }
 }
 
-pub trait Encoded: Unicode {
-    type Morpheme: Morpheme;
+// TODO: We may want to walk this back and change the `Morpheme` associated type to a
+//       `MorphemeFamily` so that the lifetime parameter `'t` can be removed. This is because
+//       `Text` and friends may want to parameterize their string representation, which can make
+//       this lifetime parameter awkward or impossible to specify. Given `Text<String,
+//       FlexFamily>`, how ought it implement `Encoded<'t>`? Using `'static` may work, but that
+//       (maybe?) precludes a generic implementation for any `Unicode` type.
+pub trait Encoded<'t>: Unicode {
+    type Morpheme: Morpheme<'t>;
 
-    fn morphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Annex11<'_, Self::Morpheme>>> {
+    fn morphemes(
+        &self,
+    ) -> impl '_ + Clone + Iterator<Item = Indexed<Reborrowed<'t, '_, Self::Morpheme>>> {
         self.graphemes()
             .map(|grapheme| {
                 grapheme
-                    .map(Annex11::<Self::Morpheme>::try_from)
+                    .map(Reborrowed::<Self::Morpheme>::try_from)
                     .transpose()
             })
             .map(move |morpheme| match morpheme {
@@ -357,12 +365,12 @@ pub trait Encoded: Unicode {
     }
 }
 
-impl<T> Encoded for T
+impl<'t, T> Encoded<'t> for T
 where
     T: ?Sized + SliceProjection,
-    T::Item: Encoded,
+    T::Item: Encoded<'t>,
 {
-    type Morpheme = <T::Item as Encoded>::Morpheme;
+    type Morpheme = <T::Item as Encoded<'t>>::Morpheme;
 }
 
 // Count of columns and rows of some text. This is somewhat general, but generally considers line
@@ -380,9 +388,9 @@ pub struct BoundingBox {
 //       This is only true where inputs and outputs are the same; a morphism **may be** okay, but a
 //       transform is not. The layout traits both work this way: they only apply to closed
 //       operations. This should be in the trait documentation.
-pub trait LinearLayout: Encoded {}
+pub trait LinearLayout<'t>: Encoded<'t> {}
 
-pub trait BlockLayout: Encoded {
+pub trait BlockLayout<'t>: Encoded<'t> {
     // NOTE: It is important to keep these kinds of bounds distinct from `Unicode::width`,
     //       `str::len`, etc.! These functions should **always** consider the complete text as a
     //       sum. Here, ASCII line breaks are used to consider the structure of the text, and so
@@ -392,11 +400,44 @@ pub trait BlockLayout: Encoded {
     fn ascii_line_break_bounds(&self) -> BoundingBox;
 }
 
-pub trait Morpheme: Sized {
-    type Annex11<'t>: AsRef<str> + Into<Flex<'t>> + TryFrom<Grapheme<'t>>;
+//pub trait Morpheme: Sized {
+//    type Annex11<'t>: AsRef<str> + Into<Flex<'t>> + TryFrom<Grapheme<'t>>;
+//}
+
+//pub type Annex11<'t, M> = <M as Morpheme>::Annex11<'t>;
+
+pub trait MorphemeFamily {
+    type Morpheme<'t>: Morpheme<'t>;
 }
 
-pub type Annex11<'t, M> = <M as Morpheme>::Annex11<'t>;
+#[derive(Debug)]
+pub enum FlexFamily {}
+
+impl MorphemeFamily for FlexFamily {
+    type Morpheme<'t> = Flex<'t>;
+}
+
+#[derive(Debug)]
+pub enum NarrowFamily {}
+
+impl MorphemeFamily for NarrowFamily {
+    type Morpheme<'t> = Narrow<'t>;
+}
+
+#[derive(Debug)]
+pub enum WideFamily {}
+
+impl MorphemeFamily for WideFamily {
+    type Morpheme<'t> = Wide<'t>;
+}
+
+pub trait Morpheme<'t>: AsRef<str> + Into<Flex<'t>> + TryFrom<Grapheme<'t>> {
+    type Family: MorphemeFamily;
+
+    fn width(&self) -> NonZeroUsize;
+}
+
+pub type Reborrowed<'t, 'b, M> = <<M as Morpheme<'t>>::Family as MorphemeFamily>::Morpheme<'b>;
 
 pub type Flex<'t> = Breadth<Narrow<'t>, Wide<'t>>;
 
@@ -405,13 +446,6 @@ impl<'t> Flex<'t> {
         match self {
             Flex::Narrow(narrow) => Flex::Narrow(narrow.into_owned()),
             Flex::Wide(wide) => Flex::Wide(wide.into_owned()),
-        }
-    }
-
-    pub fn width(&self) -> NonZeroUsize {
-        match self {
-            Flex::Narrow(_) => Narrow::WIDTH,
-            Flex::Wide(_) => Wide::WIDTH,
         }
     }
 
@@ -444,8 +478,15 @@ impl<'t> From<Wide<'t>> for Flex<'t> {
     }
 }
 
-impl Morpheme for Flex<'_> {
-    type Annex11<'t> = Flex<'t>;
+impl<'t> Morpheme<'t> for Flex<'t> {
+    type Family = FlexFamily;
+
+    fn width(&self) -> NonZeroUsize {
+        match self {
+            Flex::Narrow(_) => Narrow::WIDTH,
+            Flex::Wide(_) => Wide::WIDTH,
+        }
+    }
 }
 
 impl<'t> TryFrom<Grapheme<'t>> for Flex<'t> {
@@ -500,8 +541,12 @@ impl<'t> AsRef<str> for Narrow<'t> {
     }
 }
 
-impl Morpheme for Narrow<'_> {
-    type Annex11<'t> = Narrow<'t>;
+impl<'t> Morpheme<'t> for Narrow<'t> {
+    type Family = NarrowFamily;
+
+    fn width(&self) -> NonZeroUsize {
+        Self::WIDTH
+    }
 }
 
 impl<'t> TryFrom<Grapheme<'t>> for Narrow<'t> {
@@ -564,8 +609,12 @@ impl<'t> AsRef<str> for Wide<'t> {
     }
 }
 
-impl Morpheme for Wide<'_> {
-    type Annex11<'t> = Wide<'t>;
+impl<'t> Morpheme<'t> for Wide<'t> {
+    type Family = WideFamily;
+
+    fn width(&self) -> NonZeroUsize {
+        Self::WIDTH
+    }
 }
 
 impl<'t> TryFrom<Grapheme<'t>> for Wide<'t> {
@@ -591,6 +640,12 @@ impl<'t> Unicode for Wide<'t> {
         Wide::WIDTH.into()
     }
 }
+
+// TODO: The types below are most analogous to `Content` types in the original design. As such,
+//       maybe they ought to be parameterized by string representation rather than choosing
+//       `Cow<str>`. It may be better for the API to support `Text<String, FlexFamily>`, for
+//       example, so that users need not juggle lifetimes if they don't care about potential
+//       performance penalties or no such penalties really apply to their use case.
 
 // TODO: The derived implementations do not depend on the type parameter `M`. Implement them
 //       explicitly to reflect this.
@@ -639,7 +694,7 @@ impl<'t, M> Text<'t, M> {
 
 impl<'t, M> Text<'t, M>
 where
-    M: Morpheme,
+    M: Morpheme<'t>,
 {
     pub fn from_string_or_empty(text: impl Into<Cow<'t, str>>) -> Self {
         match Text::try_from(text.into()) {
@@ -697,13 +752,16 @@ where
     // and line breaks are encoded inline as code points. In other words, it is not designed for
     // block layout. This function is an **explicit** way to interpret it as such (and only through
     // a borrow).
-    pub fn as_block_layout(&self) -> impl '_ + BlockLayout {
+    pub fn as_block_layout<'b>(&'b self) -> impl BlockLayout<'b>
+    where
+        'b: 't,
+    {
         #[derive(Debug)]
         struct AsBlockLayout<'t, M>(&'t Text<'t, M>);
 
-        impl<M> BlockLayout for AsBlockLayout<'_, M>
+        impl<'t, M> BlockLayout<'t> for AsBlockLayout<'t, M>
         where
-            M: Morpheme,
+            M: Morpheme<'t>,
         {
             fn ascii_line_break_bounds(&self) -> BoundingBox {
                 let mut count = 0;
@@ -728,9 +786,9 @@ where
             }
         }
 
-        impl<M> Encoded for AsBlockLayout<'_, M>
+        impl<'t, M> Encoded<'t> for AsBlockLayout<'t, M>
         where
-            M: Morpheme,
+            M: Morpheme<'t>,
         {
             type Morpheme = M;
         }
@@ -755,18 +813,18 @@ impl<'t, M> AsRef<str> for Text<'t, M> {
     }
 }
 
-impl<M> Encoded for Text<'_, M>
+impl<'t, M> Encoded<'t> for Text<'t, M>
 where
-    M: Morpheme,
+    M: Morpheme<'t>,
 {
     type Morpheme = M;
 }
 
-impl<M> LinearLayout for Text<'_, M> where M: Morpheme {}
+impl<'t, M> LinearLayout<'t> for Text<'t, M> where M: Morpheme<'t> {}
 
 impl<'t, M> TryFrom<Cow<'t, str>> for Text<'t, M>
 where
-    M: Morpheme,
+    M: Morpheme<'t>,
 {
     type Error = MorphologyError;
 
@@ -788,7 +846,7 @@ where
         if non_static_inner_text
             .graphemes()
             .map(Indexed::into_text)
-            .map(Annex11::<M>::try_from)
+            .map(M::try_from)
             .all(|morpheme| morpheme.is_ok())
         {
             Ok(Text::unchecked(text))
@@ -801,7 +859,7 @@ where
 
 impl<'t, M> TryFrom<&'t str> for Text<'t, M>
 where
-    M: Morpheme,
+    M: Morpheme<'t>,
 {
     type Error = MorphologyError;
 
@@ -812,7 +870,7 @@ where
 
 impl<'t, M> TryFrom<String> for Text<'t, M>
 where
-    M: Morpheme,
+    M: Morpheme<'t>,
 {
     type Error = MorphologyError;
 
@@ -915,9 +973,9 @@ impl<M, S> AsRef<str> for Segment<'_, M, S> {
     }
 }
 
-impl<M, S> BlockLayout for Segment<'_, M, S>
+impl<'t, M, S> BlockLayout<'t> for Segment<'t, M, S>
 where
-    M: Morpheme,
+    M: Morpheme<'t>,
 {
     fn ascii_line_break_bounds(&self) -> BoundingBox {
         BoundingBox {
@@ -928,14 +986,14 @@ where
     }
 }
 
-impl<M, S> Encoded for Segment<'_, M, S>
+impl<'t, M, S> Encoded<'t> for Segment<'t, M, S>
 where
-    M: Morpheme,
+    M: Morpheme<'t>,
 {
     type Morpheme = M;
 }
 
-impl<M, S> LinearLayout for Segment<'_, M, S> where M: Morpheme {}
+impl<'t, M, S> LinearLayout<'t> for Segment<'t, M, S> where M: Morpheme<'t> {}
 
 impl<'t, M, S> TryFrom<Text<'t, M>> for Segment<'t, M, S>
 where
@@ -999,9 +1057,9 @@ impl<'t, M, S> Line<'t, M, S> {
     }
 }
 
-impl<M, S> BlockLayout for Line<'_, M, S>
+impl<'t, M, S> BlockLayout<'t> for Line<'t, M, S>
 where
-    M: Morpheme,
+    M: Morpheme<'t>,
 {
     fn ascii_line_break_bounds(&self) -> BoundingBox {
         BoundingBox {
@@ -1012,7 +1070,7 @@ where
     }
 }
 
-impl<M, S> Default for Line<'_, M, S> {
+impl<'t, M, S> Default for Line<'t, M, S> {
     fn default() -> Self {
         Line {
             segments: Default::default(),
@@ -1020,17 +1078,11 @@ impl<M, S> Default for Line<'_, M, S> {
     }
 }
 
-impl<M, S> Encoded for Line<'_, M, S>
+impl<'t, M, S> Encoded<'t> for Line<'t, M, S>
 where
-    M: Morpheme,
+    M: Morpheme<'t>,
 {
     type Morpheme = M;
-
-    // TODO: What does this implementation accomplish (over the default)? (Really) remove this if
-    //       there is no meaningful benefit.
-    //fn morphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Annex11<'_, Self::Morpheme>>> {
-    //    self.segments.as_slice().morphemes()
-    //}
 }
 
 impl<'t, M, S> From<Vec<Segment<'t, M, S>>> for Line<'t, M, S> {
@@ -1048,9 +1100,9 @@ impl<'t, M, S> FromIterator<Segment<'t, M, S>> for Line<'t, M, S> {
     }
 }
 
-impl<M, S> LinearLayout for Line<'_, M, S> where M: Morpheme {}
+impl<'t, M, S> LinearLayout<'t> for Line<'t, M, S> where M: Morpheme<'t> {}
 
-impl<M, S> Unicode for Line<'_, M, S> {
+impl<'t, M, S> Unicode for Line<'t, M, S> {
     fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Grapheme<'_>>> {
         self.segments.as_slice().graphemes()
     }

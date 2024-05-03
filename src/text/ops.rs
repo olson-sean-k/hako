@@ -1,9 +1,7 @@
 use std::convert::Infallible;
 use std::marker::PhantomData;
 
-use crate::text::{
-    Annex11, BlockLayout, Encoded, Grapheme, LinearLayout, Morpheme, Narrow, Unicode, Wide,
-};
+use crate::text::{BlockLayout, Encoded, Grapheme, LinearLayout, Morpheme, Narrow, Unicode, Wide};
 
 pub use Layer::{Back, Front};
 
@@ -20,10 +18,10 @@ pub struct Congruent<L, R> {
 }
 
 impl<L, R> Congruent<L, R> {
-    pub fn try_from_block(left: L, right: R) -> Result<Self, (L, R)>
+    pub fn try_from_block<'t>(left: L, right: R) -> Result<Self, (L, R)>
     where
-        L: BlockLayout,
-        R: BlockLayout,
+        L: BlockLayout<'t>,
+        R: BlockLayout<'t>,
     {
         if left.ascii_line_break_bounds() == right.ascii_line_break_bounds() {
             Ok(Congruent { left, right })
@@ -34,11 +32,11 @@ impl<L, R> Congruent<L, R> {
     }
 }
 
-pub trait Truncate: LinearLayout {
+pub trait Truncate<'t>: LinearLayout<'t> {
     fn truncate(self, max: usize) -> (usize, Self);
 }
 
-pub trait Concatenate: LinearLayout + Sized {
+pub trait Concatenate<'t>: LinearLayout<'t> + Sized {
     // TODO: Using morpheme iterators (which include byte indices) can be great for efficient
     // repetition and avoiding excess cloning and ridiculous allocations, but requires an upper
     // bound to avoid some bad behaviors, namely divergence (infinite looping). Note too that byte
@@ -48,7 +46,7 @@ pub trait Concatenate: LinearLayout + Sized {
     fn concatenate<I>(self, morphemes: I) -> (usize, Self)
     where
         I: IntoIterator,
-        I::Item: Morpheme;
+        I::Item: Morpheme<'t>;
 
     // TODO: The strange "associated type constructor" relationship between `Morpheme` and
     //       `Morpheme::Annex11` is a bit of a problem here. We must express that `I::Item` is the
@@ -59,12 +57,12 @@ pub trait Concatenate: LinearLayout + Sized {
     where
         I: IntoIterator,
         I::IntoIter: Clone,
-        I::Item: Morpheme,
+        I::Item: Morpheme<'t>,
     {
         let mut width = self.width();
         self.concatenate(morphemes.into_iter().cycle().take_while(|morpheme| {
             width = width
-                .checked_add(morpheme.width())
+                .checked_add(morpheme.width().into())
                 .expect("overflow extending text");
             width < min
         }))
@@ -138,28 +136,28 @@ where
 // TODO: Since this provides a high degree of control, perhaps this trait/operation should be named
 //       "merge" instead of "overlay". That of course would require renaming types that already use
 //       the term "merge" though. Hmm.
-pub trait Overlay: Encoded {
+pub trait Overlay<'t>: Encoded<'t> {
     type Blend<'o>;
-    type Output: Encoded;
+    type Output: Encoded<'t>;
 
     fn overlay_with<F>(self, f: F) -> Self::Output
     where
         F: FnMut(Self::Blend<'_>) -> Receipt;
 }
 
-pub trait TryOverlay: Encoded {
+pub trait TryOverlay<'t>: Encoded<'t> {
     type Error;
     type Blend<'o>;
-    type Output: Encoded;
+    type Output: Encoded<'t>;
 
     fn try_overlay_with<F>(self, f: F) -> Result<Self::Output, Self::Error>
     where
         F: FnMut(Self::Blend<'_>) -> Receipt;
 }
 
-impl<T> TryOverlay for T
+impl<'t, T> TryOverlay<'t> for T
 where
-    T: Overlay,
+    T: Overlay<'t>,
 {
     type Error = Infallible;
     type Blend<'o> = T::Blend<'o>;
