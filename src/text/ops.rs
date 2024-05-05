@@ -1,7 +1,6 @@
 use std::convert::Infallible;
-use std::marker::PhantomData;
 
-use crate::text::{BlockLayout, Encoded, Grapheme, LinearLayout, Morpheme, Narrow, Unicode, Wide};
+use crate::text::{BlockLayout, Encoded, LinearLayout, Morpheme, MorphemeFor, Narrow, Wide};
 
 pub use Layer::{Back, Front};
 
@@ -18,10 +17,10 @@ pub struct Congruent<L, R> {
 }
 
 impl<L, R> Congruent<L, R> {
-    pub fn try_from_block<'t>(left: L, right: R) -> Result<Self, (L, R)>
+    pub fn try_from_blocks<'t>(left: L, right: R) -> Result<Self, (L, R)>
     where
-        L: BlockLayout<'t>,
-        R: BlockLayout<'t>,
+        L: BlockLayout,
+        R: BlockLayout,
     {
         if left.ascii_line_break_bounds() == right.ascii_line_break_bounds() {
             Ok(Congruent { left, right })
@@ -32,41 +31,39 @@ impl<L, R> Congruent<L, R> {
     }
 }
 
-pub trait Truncate<'t>: LinearLayout<'t> {
-    fn truncate(self, max: usize) -> (usize, Self);
+pub trait Truncate: LinearLayout {
+    fn truncate(&mut self, max: usize) -> usize;
 }
 
-pub trait Concatenate<'t>: LinearLayout<'t> + Sized {
-    // TODO: Using morpheme iterators (which include byte indices) can be great for efficient
-    // repetition and avoiding excess cloning and ridiculous allocations, but requires an upper
-    // bound to avoid some bad behaviors, namely divergence (infinite looping). Note too that byte
-    // indices are only useful if their associated buffer is also available (i.e., the `str`).
-    // Perhaps `concatenate` should accept another `Self` and provide a default implementation in
-    // terms of `extend`?
-    fn concatenate<I>(self, morphemes: I) -> (usize, Self)
+pub trait Extend: LinearLayout {
+    fn extend<'t, I>(&mut self, morphemes: I) -> usize
     where
-        I: IntoIterator,
-        I::Item: Morpheme<'t>;
+        I: IntoIterator<Item = MorphemeFor<'t, Self::MorphemeFamily>>;
 
-    // TODO: The strange "associated type constructor" relationship between `Morpheme` and
-    //       `Morpheme::Annex11` is a bit of a problem here. We must express that `I::Item` is the
-    //       `Annex11` type of some `Morpheme` type. These types are meant to be the same, but this
-    //       is not enforced by the type system and so must be expressed explicitly when used this
-    //       way. Is there some way to introduce a lifetime parameter to `Morpheme` instead?
-    fn extend<I>(self, min: usize, morphemes: I) -> (usize, Self)
+    fn fill<'t, I>(&mut self, min: usize, morphemes: I) -> usize
     where
-        I: IntoIterator,
+        I: IntoIterator<Item = MorphemeFor<'t, Self::MorphemeFamily>>,
         I::IntoIter: Clone,
-        I::Item: Morpheme<'t>,
     {
         let mut width = self.width();
-        self.concatenate(morphemes.into_iter().cycle().take_while(|morpheme| {
+        self.extend(morphemes.into_iter().cycle().take_while(|morpheme| {
             width = width
                 .checked_add(morpheme.width().into())
                 .expect("overflow extending text");
             width < min
         }))
     }
+}
+
+// NOTE: This is similar to `Extend`, but is closed over text types: it accepts two `T`s and
+//       outputs their concatenation (also a `T`). This is useful, as types like `Line` can support
+//       the composition of text types using `&str` representations (because `Line` can append
+//       `Segment`s).
+//
+//       Also, unlike `Extend`, this trait may avoid copies, as `Extend` requires reading and
+//       copying morphemes from the RHS. `Append` may move or consolidate buffers.
+pub trait Append: LinearLayout {
+    fn append(self, rhs: Self) -> Self;
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -133,31 +130,28 @@ where
     Expand(Expand<'t, 'o>),
 }
 
-// TODO: Since this provides a high degree of control, perhaps this trait/operation should be named
-//       "merge" instead of "overlay". That of course would require renaming types that already use
-//       the term "merge" though. Hmm.
-pub trait Overlay<'t>: Encoded<'t> {
+pub trait Overlay: Encoded {
     type Blend<'o>;
-    type Output: Encoded<'t>;
+    type Output: Encoded;
 
     fn overlay_with<F>(self, f: F) -> Self::Output
     where
         F: FnMut(Self::Blend<'_>) -> Receipt;
 }
 
-pub trait TryOverlay<'t>: Encoded<'t> {
+pub trait TryOverlay: Encoded {
     type Error;
     type Blend<'o>;
-    type Output: Encoded<'t>;
+    type Output: Encoded;
 
     fn try_overlay_with<F>(self, f: F) -> Result<Self::Output, Self::Error>
     where
         F: FnMut(Self::Blend<'_>) -> Receipt;
 }
 
-impl<'t, T> TryOverlay<'t> for T
+impl<T> TryOverlay for T
 where
-    T: Overlay<'t>,
+    T: Overlay,
 {
     type Error = Infallible;
     type Blend<'o> = T::Blend<'o>;

@@ -43,22 +43,20 @@ impl From<Infallible> for BoundaryError {
     }
 }
 
+// The index type parameter `N` is in a somewhat unconventional order, but appears last so that a
+// default is possible.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct Indexed<T> {
-    pub index: usize,
+pub struct Indexed<T, N = usize> {
     pub text: T,
+    pub index: N,
 }
 
-impl<T> Indexed<T> {
-    pub fn zero(text: T) -> Self {
-        Indexed { index: 0, text }
-    }
-
+impl<T, N> Indexed<T, N> {
     pub fn into_text(self) -> T {
         self.text
     }
 
-    pub fn map<U, F>(self, f: F) -> Indexed<U>
+    pub fn map<U, F>(self, f: F) -> Indexed<U, N>
     where
         F: FnOnce(T) -> U,
     {
@@ -69,37 +67,49 @@ impl<T> Indexed<T> {
         }
     }
 
-    pub fn as_ref(&self) -> Indexed<&T> {
+    pub fn as_ref(&self) -> Indexed<&T, N>
+    where
+        N: Clone,
+    {
         Indexed {
-            index: self.index,
+            index: self.index.clone(),
             text: &self.text,
         }
     }
 
-    pub fn as_mut(&mut self) -> Indexed<&mut T> {
+    pub fn as_mut(&mut self) -> Indexed<&mut T, N>
+    where
+        N: Clone,
+    {
         Indexed {
-            index: self.index,
+            index: self.index.clone(),
             text: &mut self.text,
         }
     }
 }
 
-impl<T> Indexed<Option<T>> {
-    pub fn transpose(self) -> Option<Indexed<T>> {
+impl<T, N> Indexed<Option<T>, N> {
+    pub fn transpose(self) -> Option<Indexed<T, N>> {
         let Indexed { index, text } = self;
         text.map(|text| Indexed { index, text })
     }
 }
 
-impl<T, E> Indexed<Result<T, E>> {
-    pub fn transpose(self) -> Result<Indexed<T>, E> {
+impl<T, E, N> Indexed<Result<T, E>, N> {
+    pub fn transpose(self) -> Result<Indexed<T, N>, E> {
         let Indexed { index, text } = self;
         text.map(|text| Indexed { index, text })
     }
 }
 
-impl<T> From<(usize, T)> for Indexed<T> {
-    fn from((index, text): (usize, T)) -> Self {
+impl<T> Indexed<T, usize> {
+    pub fn zero(text: T) -> Self {
+        Indexed { index: 0, text }
+    }
+}
+
+impl<T, N> From<(N, T)> for Indexed<T, N> {
+    fn from((index, text): (N, T)) -> Self {
         Indexed { index, text }
     }
 }
@@ -172,6 +182,45 @@ impl StrExt for str {
     }
 }
 
+trait ToStringMut: Unicode {
+    fn to_string_mut(&mut self) -> &mut String;
+}
+
+impl<'t> ToStringMut for Cow<'t, str> {
+    fn to_string_mut(&mut self) -> &mut String {
+        self.to_mut()
+    }
+}
+
+impl ToStringMut for String {
+    fn to_string_mut(&mut self) -> &mut String {
+        self
+    }
+}
+
+pub trait Empty {
+    const EMPTY: Self;
+}
+
+impl<'t> Empty for Cow<'t, str> {
+    const EMPTY: Self = Cow::Borrowed("");
+}
+
+impl<'t> Empty for &'t str {
+    const EMPTY: Self = "";
+}
+
+impl Empty for String {
+    const EMPTY: Self = String::new();
+}
+
+// TODO: Use the term "blank" instead of "space" for morphemes. That is, abstract the notion of
+//       non-display morphemes. "Space" is probably more appropriate for more general text types
+//       though. See other TODOs about the terms "empty" and "blank" (remove "zero").
+pub trait Blank: MorphemeFamily {
+    const BLANK: MorphemeFor<'static, Self>;
+}
+
 // TODO: Is there a better name for this? This is implemented a bit too broadly to function as a
 //       typical extension trait (i.e., `StrExt`), but `str` and friends are already Unicode.
 //       Moreoever, this trait adopts specific answers to somewhat ambiguous questions in Unicode,
@@ -226,6 +275,16 @@ impl Unicode for str {
     }
 }
 
+impl<'t> Unicode for &'t str {
+    fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Grapheme<'_>>> {
+        Unicode::graphemes(*self)
+    }
+
+    fn width(&self) -> usize {
+        Unicode::width(*self)
+    }
+}
+
 impl Unicode for String {
     fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Grapheme<'_>>> {
         self.as_str().graphemes()
@@ -256,6 +315,10 @@ impl<'t> Grapheme<'t> {
         Grapheme {
             text: text.into_owned().into(),
         }
+    }
+
+    pub fn into_string(self) -> Cow<'t, str> {
+        self.text
     }
 
     pub fn points(&self) -> impl '_ + Iterator<Item = char> {
@@ -340,22 +403,23 @@ impl<'t> Unicode for Grapheme<'t> {
     }
 }
 
-// TODO: We may want to walk this back and change the `Morpheme` associated type to a
-//       `MorphemeFamily` so that the lifetime parameter `'t` can be removed. This is because
-//       `Text` and friends may want to parameterize their string representation, which can make
-//       this lifetime parameter awkward or impossible to specify. Given `Text<String,
-//       FlexFamily>`, how ought it implement `Encoded<'t>`? Using `'static` may work, but that
-//       (maybe?) precludes a generic implementation for any `Unicode` type.
-pub trait Encoded<'t>: Unicode {
-    type Morpheme: Morpheme<'t>;
+pub trait Encoded: Unicode {
+    type MorphemeFamily: MorphemeFamily;
 
+    // TODO: `Encoded` types must never allow construction from text containing non-morphemes.
+    //       Ideally then, this function need not examine the text and can instead construct
+    //       morphemes via `unchecked`! In a default implementation though, shenanigans are
+    //       possible, especially if downstream code implements this trait (which would implicitly
+    //       grant access to `unchecked`, which is intentionally not in the public API). This trait
+    //       could be sealed or an internal function could be used to trivially implement this
+    //       function instead of providing a default.
     fn morphemes(
         &self,
-    ) -> impl '_ + Clone + Iterator<Item = Indexed<Reborrowed<'t, '_, Self::Morpheme>>> {
+    ) -> impl '_ + Clone + Iterator<Item = Indexed<MorphemeFor<'_, Self::MorphemeFamily>>> {
         self.graphemes()
             .map(|grapheme| {
                 grapheme
-                    .map(Reborrowed::<Self::Morpheme>::try_from)
+                    .map(MorphemeFor::<Self::MorphemeFamily>::try_from)
                     .transpose()
             })
             .map(move |morpheme| match morpheme {
@@ -365,12 +429,12 @@ pub trait Encoded<'t>: Unicode {
     }
 }
 
-impl<'t, T> Encoded<'t> for T
+impl<T> Encoded for T
 where
     T: ?Sized + SliceProjection,
-    T::Item: Encoded<'t>,
+    T::Item: Encoded,
 {
-    type Morpheme = <T::Item as Encoded<'t>>::Morpheme;
+    type MorphemeFamily = <T::Item as Encoded>::MorphemeFamily;
 }
 
 // Count of columns and rows of some text. This is somewhat general, but generally considers line
@@ -388,9 +452,9 @@ pub struct BoundingBox {
 //       This is only true where inputs and outputs are the same; a morphism **may be** okay, but a
 //       transform is not. The layout traits both work this way: they only apply to closed
 //       operations. This should be in the trait documentation.
-pub trait LinearLayout<'t>: Encoded<'t> {}
+pub trait LinearLayout: Encoded {}
 
-pub trait BlockLayout<'t>: Encoded<'t> {
+pub trait BlockLayout: Encoded {
     // NOTE: It is important to keep these kinds of bounds distinct from `Unicode::width`,
     //       `str::len`, etc.! These functions should **always** consider the complete text as a
     //       sum. Here, ASCII line breaks are used to consider the structure of the text, and so
@@ -406,6 +470,16 @@ pub trait BlockLayout<'t>: Encoded<'t> {
 
 //pub type Annex11<'t, M> = <M as Morpheme>::Annex11<'t>;
 
+pub trait Unchecked {}
+
+impl<'t> Unchecked for Cow<'t, str> {}
+
+impl<'t> Unchecked for &'t str {}
+
+impl Unchecked for String {}
+
+// TODO: Consider the term "kind" instead of "family". I prefer the term "kind" in a different
+//       pattern, but it works well here and has the benefit of terseness.
 pub trait MorphemeFamily {
     type Morpheme<'t>: Morpheme<'t>;
 }
@@ -434,10 +508,12 @@ impl MorphemeFamily for WideFamily {
 pub trait Morpheme<'t>: AsRef<str> + Into<Flex<'t>> + TryFrom<Grapheme<'t>> {
     type Family: MorphemeFamily;
 
+    fn into_string(self) -> Cow<'t, str>;
+
     fn width(&self) -> NonZeroUsize;
 }
 
-pub type Reborrowed<'t, 'b, M> = <<M as Morpheme<'t>>::Family as MorphemeFamily>::Morpheme<'b>;
+pub type MorphemeFor<'t, M> = <M as MorphemeFamily>::Morpheme<'t>;
 
 pub type Flex<'t> = Breadth<Narrow<'t>, Wide<'t>>;
 
@@ -480,6 +556,13 @@ impl<'t> From<Wide<'t>> for Flex<'t> {
 
 impl<'t> Morpheme<'t> for Flex<'t> {
     type Family = FlexFamily;
+
+    fn into_string(self) -> Cow<'t, str> {
+        match self {
+            Flex::Narrow(narrow) => narrow.into_string(),
+            Flex::Wide(wide) => wide.into_string(),
+        }
+    }
 
     fn width(&self) -> NonZeroUsize {
         match self {
@@ -543,6 +626,10 @@ impl<'t> AsRef<str> for Narrow<'t> {
 
 impl<'t> Morpheme<'t> for Narrow<'t> {
     type Family = NarrowFamily;
+
+    fn into_string(self) -> Cow<'t, str> {
+        self.grapheme.into_string()
+    }
 
     fn width(&self) -> NonZeroUsize {
         Self::WIDTH
@@ -612,6 +699,10 @@ impl<'t> AsRef<str> for Wide<'t> {
 impl<'t> Morpheme<'t> for Wide<'t> {
     type Family = WideFamily;
 
+    fn into_string(self) -> Cow<'t, str> {
+        self.grapheme.into_string()
+    }
+
     fn width(&self) -> NonZeroUsize {
         Self::WIDTH
     }
@@ -651,79 +742,111 @@ impl<'t> Unicode for Wide<'t> {
 //       explicitly to reflect this.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 #[repr(transparent)]
-pub struct Text<'t, M = Flex<'t>> {
-    text: Cow<'t, str>,
+pub struct Text<T, M = FlexFamily> {
+    text: T,
     _phantom: PhantomData<fn() -> M>,
 }
 
-impl<'t, M> Text<'t, M> {
-    fn unchecked(text: Cow<'t, str>) -> Self {
+impl<T, M> Text<T, M>
+where
+    T: AsRef<str> + Unchecked + Unicode,
+    M: MorphemeFamily,
+{
+    fn unchecked(text: T) -> Self {
         Text {
             text,
             _phantom: PhantomData,
         }
     }
 
-    pub const fn empty() -> Text<'static, M> {
+    pub fn try_from_string(text: impl Into<T>) -> Result<Self, MorphologyError> {
+        let text = text.into();
+        if text
+            .as_ref()
+            .graphemes()
+            .map(Indexed::into_text)
+            .map(MorphemeFor::<M>::try_from)
+            .all(|morpheme| morpheme.is_ok())
+        {
+            Ok(Text::unchecked(text))
+        }
+        else {
+            Err(MorphologyError)
+        }
+    }
+
+    pub fn from_string_or_empty(text: impl Into<T>) -> Self
+    where
+        T: Empty,
+    {
+        match Text::try_from_string(text) {
+            Ok(text) => text,
+            _ => Text::empty(),
+        }
+    }
+
+    pub fn assert(text: impl Into<T>) -> Self {
+        Text::try_from_string(text).expect("failed to construct morpheme-encoded text")
+    }
+
+    pub const fn empty() -> Self
+    where
+        T: Empty,
+    {
         Text {
-            text: Cow::Borrowed(""),
+            text: T::EMPTY,
             _phantom: PhantomData,
         }
     }
 
-    pub fn assert<T>(text: T) -> Self
+    pub fn try_map_string<U, F>(self, f: F) -> Result<Text<U, M>, MorphologyError>
     where
-        Self: TryFrom<T>,
-        <Self as TryFrom<T>>::Error: Debug,
+        U: AsRef<str> + Unchecked + Unicode,
+        F: FnOnce(T) -> U,
     {
-        Text::try_from(text).expect("failed to construct morpheme-encoded text")
+        let Text { text, .. } = self;
+        Text::try_from_string(f(text))
     }
+}
 
-    pub fn into_owned(self) -> Text<'static, M> {
+impl<T, M> Text<T, M>
+where
+    T: AsRef<str>,
+{
+    pub fn as_str(&self) -> &str {
+        AsRef::<str>::as_ref(self)
+    }
+}
+
+impl<'t, M> Text<Cow<'t, str>, M> {
+    pub fn into_owned(self) -> Text<Cow<'static, str>, M> {
         let Text { text, .. } = self;
         Text {
             text: text.into_owned().into(),
             _phantom: PhantomData,
         }
     }
-
-    pub fn as_str(&self) -> &str {
-        AsRef::<str>::as_ref(self)
-    }
 }
 
-impl<'t, M> Text<'t, M>
+impl<T, M> Text<T, M>
 where
-    M: Morpheme<'t>,
+    T: AsRef<str> + Unchecked + Unicode,
+    M: MorphemeFamily,
 {
-    pub fn from_string_or_empty(text: impl Into<Cow<'t, str>>) -> Self {
-        match Text::try_from(text.into()) {
-            Ok(text) => text,
-            _ => Text::empty(),
-        }
-    }
-
-    pub fn try_map_string<F>(self, f: F) -> Result<Self, MorphologyError>
-    where
-        F: FnOnce(Cow<'t, str>) -> Cow<'t, str>,
-    {
-        let Text { text, .. } = self;
-        Text::try_from(f(text))
-    }
-
-    pub fn segments<S>(&self) -> impl '_ + Iterator<Item = Segment<'_, M, S>>
+    pub fn segments<S>(&self) -> impl '_ + Iterator<Item = Segment<&'_ str, M, S>>
     where
         S: Default,
     {
         self.text
+            .as_ref()
             .split_at_ascii_line_breaks()
-            .map(|text| Segment::unchecked(Text::unchecked(text.into()), S::default()))
+            .map(|text| Segment::unchecked(Text::unchecked(text), S::default()))
     }
 
     pub fn segments_with_transform<'s, S>(
         &'s self,
         transform: S,
-    ) -> impl 's + Iterator<Item = Segment<'s, M, S>>
+    ) -> impl 's + Iterator<Item = Segment<&'s str, M, S>>
     where
         S: 's + Clone,
     {
@@ -739,35 +862,35 @@ where
     pub fn segments_with<'s, S, F>(
         &'s self,
         mut f: F,
-    ) -> impl 's + Iterator<Item = Segment<'s, M, S>>
+    ) -> impl 's + Iterator<Item = Segment<&'s str, M, S>>
     where
         F: 's + FnMut() -> S,
     {
         self.text
+            .as_ref()
             .split_at_ascii_line_breaks()
-            .map(move |text| Segment::unchecked(Text::unchecked(text.into()), f()))
+            .map(move |text| Segment::unchecked(Text::unchecked(text), f()))
     }
 
     // This indirection is very intentional. `Text` is non-structural w.r.t. lines: it is just text
     // and line breaks are encoded inline as code points. In other words, it is not designed for
     // block layout. This function is an **explicit** way to interpret it as such (and only through
     // a borrow).
-    pub fn as_block_layout<'b>(&'b self) -> impl BlockLayout<'b>
-    where
-        'b: 't,
-    {
+    pub fn as_block_layout(&self) -> impl '_ + BlockLayout {
         #[derive(Debug)]
-        struct AsBlockLayout<'t, M>(&'t Text<'t, M>);
+        struct AsBlockLayout<'b, T, M>(&'b Text<T, M>);
 
-        impl<'t, M> BlockLayout<'t> for AsBlockLayout<'t, M>
+        impl<T, M> BlockLayout for AsBlockLayout<'_, T, M>
         where
-            M: Morpheme<'t>,
+            T: AsRef<str> + Unicode,
+            M: MorphemeFamily,
         {
             fn ascii_line_break_bounds(&self) -> BoundingBox {
                 let mut count = 0;
                 let width = self
                     .0
                     .text
+                    .as_ref()
                     .split_at_ascii_line_breaks()
                     .enumerate()
                     .map(|(index, line)| {
@@ -786,14 +909,18 @@ where
             }
         }
 
-        impl<'t, M> Encoded<'t> for AsBlockLayout<'t, M>
+        impl<T, M> Encoded for AsBlockLayout<'_, T, M>
         where
-            M: Morpheme<'t>,
+            T: Unicode,
+            M: MorphemeFamily,
         {
-            type Morpheme = M;
+            type MorphemeFamily = M;
         }
 
-        impl<M> Unicode for AsBlockLayout<'_, M> {
+        impl<T, M> Unicode for AsBlockLayout<'_, T, M>
+        where
+            T: Unicode,
+        {
             fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Grapheme<'_>>> {
                 self.0.graphemes()
             }
@@ -807,85 +934,94 @@ where
     }
 }
 
-impl<'t, M> AsRef<str> for Text<'t, M> {
+impl<T, M> ops::Append for Text<T, M>
+where
+    T: AsRef<str> + ToStringMut,
+    M: MorphemeFamily,
+{
+    fn append(mut self, rhs: Self) -> Self {
+        self.text.to_string_mut().push_str(rhs.as_str());
+        self
+    }
+}
+
+impl<T, M> AsRef<str> for Text<T, M>
+where
+    T: AsRef<str>,
+{
     fn as_ref(&self) -> &str {
         self.text.as_ref()
     }
 }
 
-impl<'t, M> Encoded<'t> for Text<'t, M>
+impl<T, M> Encoded for Text<T, M>
 where
-    M: Morpheme<'t>,
+    T: Unicode,
+    M: MorphemeFamily,
 {
-    type Morpheme = M;
+    type MorphemeFamily = M;
 }
 
-impl<'t, M> LinearLayout<'t> for Text<'t, M> where M: Morpheme<'t> {}
-
-impl<'t, M> TryFrom<Cow<'t, str>> for Text<'t, M>
+impl<T, M> ops::Extend for Text<T, M>
 where
-    M: Morpheme<'t>,
+    T: ToStringMut,
+    M: MorphemeFamily,
 {
-    type Error = MorphologyError;
+    fn extend<'t, I>(&mut self, morphemes: I) -> usize
+    where
+        I: IntoIterator<Item = MorphemeFor<'t, Self::MorphemeFamily>>,
+    {
+        self.text
+            .to_string_mut()
+            .extend(morphemes.into_iter().map(Morpheme::into_string));
+        self.width()
+    }
+}
 
-    fn try_from(text: Cow<'t, str>) -> Result<Self, Self::Error> {
-        use std::mem;
+impl<T, M> LinearLayout for Text<T, M>
+where
+    T: Unicode,
+    M: MorphemeFamily,
+{
+}
 
-        // TODO: Lifetimes are overcaptured in `Unicode::graphemes`. In this case, the lifetime
-        //       `'t` is captured and so the borrow through `graphemes` persists even after
-        //       dropping the iterator. The text is coerced to `&'static str` to examine the
-        //       graphemes instead. This is far from ideal, but abstracts over ownership without
-        //       unnecessary cloning.
-        //
-        //       See https://rust-lang.github.io/rfcs/3498-lifetime-capture-rules-2024.html#overcapturing
-        // SAFETY: The transmuted `non_static_inner_text` binding must not escape this function in
-        //         any way: it is **not** `'static` and is only valid over the borrow of `text` in
-        //         `AsRef::as_ref` (local to this function).
-        let non_static_inner_text =
-            unsafe { mem::transmute::<&'_ str, &'static str>(text.as_ref()) };
-        if non_static_inner_text
+impl<T, M> ops::Truncate for Text<T, M>
+where
+    T: ToStringMut,
+    M: MorphemeFamily,
+{
+    fn truncate(&mut self, max: usize) -> usize {
+        let mut width = 0usize;
+        // This iterator expression cannot use `find`, because it borrows the iterator, which
+        // prevents the mutable borrow in the branch.
+        if let Some(len) = self
             .graphemes()
-            .map(Indexed::into_text)
-            .map(M::try_from)
-            .all(|morpheme| morpheme.is_ok())
+            .skip_while(|grapheme| {
+                width = width
+                    .checked_add(grapheme.text.width().into())
+                    .expect("overflow truncating text");
+                width <= max
+            })
+            .take(1)
+            .last()
+            .map(|grapheme| grapheme.index)
         {
-            Ok(Text::unchecked(text))
+            self.text.to_string_mut().truncate(len);
         }
-        else {
-            Err(MorphologyError)
-        }
+        self.width()
     }
 }
 
-impl<'t, M> TryFrom<&'t str> for Text<'t, M>
+impl<T, M> Unicode for Text<T, M>
 where
-    M: Morpheme<'t>,
+    T: Unicode,
 {
-    type Error = MorphologyError;
-
-    fn try_from(text: &'t str) -> Result<Self, Self::Error> {
-        Cow::from(text).try_into()
-    }
-}
-
-impl<'t, M> TryFrom<String> for Text<'t, M>
-where
-    M: Morpheme<'t>,
-{
-    type Error = MorphologyError;
-
-    fn try_from(text: String) -> Result<Self, Self::Error> {
-        Cow::from(text).try_into()
-    }
-}
-
-impl<'t, M> Unicode for Text<'t, M> {
     fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Grapheme<'_>>> {
-        self.as_ref().graphemes()
+        self.text.graphemes()
     }
 
     fn width(&self) -> usize {
-        self.as_ref().width()
+        self.text.width()
     }
 }
 
@@ -895,18 +1031,22 @@ impl<'t, M> Unicode for Text<'t, M> {
 // TODO: The derived implementations do not depend on the type parameter `M`. Implement them
 //       explicitly to reflect this.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct Segment<'t, M = Flex<'t>, S = ()> {
-    text: Text<'t, M>,
+pub struct Segment<T, M = FlexFamily, S = ()> {
+    text: Text<T, M>,
     transform: S,
 }
 
-impl<'t, M, S> Segment<'t, M, S> {
-    const fn unchecked(text: Text<'t, M>, transform: S) -> Self {
+impl<T, M, S> Segment<T, M, S>
+where
+    T: AsRef<str> + Unchecked + Unicode,
+    M: MorphemeFamily,
+{
+    const fn unchecked(text: Text<T, M>, transform: S) -> Self {
         Segment { text, transform }
     }
 
     pub fn try_from_text_with_transform(
-        text: Text<'t, M>,
+        text: Text<T, M>,
         transform: S,
     ) -> Result<Self, ControlError> {
         if text.as_ref().has_ascii_line_breaks() {
@@ -917,7 +1057,10 @@ impl<'t, M, S> Segment<'t, M, S> {
         }
     }
 
-    pub fn from_text_or_joined_with_transform(text: Text<'t, M>, transform: S) -> Self {
+    pub fn from_text_or_joined_with_transform(text: Text<T, M>, transform: S) -> Self
+    where
+        T: From<String>,
+    {
         let mut lines = text.as_str().split_at_ascii_line_breaks().peekable();
         let first = lines.next();
         let text = if lines.peek().is_some() {
@@ -930,22 +1073,15 @@ impl<'t, M, S> Segment<'t, M, S> {
         Segment { text, transform }
     }
 
-    pub fn from_text_or_joined(text: Text<'t, M>) -> Self
+    pub fn from_text_or_joined(text: Text<T, M>) -> Self
     where
+        T: From<String>,
         S: Default,
     {
         Segment::from_text_or_joined_with_transform(text, S::default())
     }
 
-    pub fn into_owned(self) -> Segment<'static, M, S> {
-        let Segment { text, transform } = self;
-        Segment {
-            text: text.into_owned(),
-            transform,
-        }
-    }
-
-    pub fn map_transform<U, F>(self, f: F) -> Segment<'t, M, U>
+    pub fn map_transform<U, F>(self, f: F) -> Segment<T, M, U>
     where
         F: FnOnce(S) -> U,
     {
@@ -955,27 +1091,53 @@ impl<'t, M, S> Segment<'t, M, S> {
             transform: f(transform),
         }
     }
+}
 
+impl<T, M, S> Segment<T, M, S>
+where
+    T: AsRef<str>,
+{
     pub fn as_str(&self) -> &str {
         AsRef::<str>::as_ref(self)
     }
 }
 
-impl<'t, M> Segment<'t, M, ()> {
-    pub const fn empty() -> Self {
+impl<T, M> Segment<T, M, ()>
+where
+    T: AsRef<str> + Unchecked + Unicode,
+    M: MorphemeFamily,
+{
+    pub const fn empty() -> Self
+    where
+        T: Empty,
+    {
         Segment::unchecked(Text::empty(), ())
     }
 }
 
-impl<M, S> AsRef<str> for Segment<'_, M, S> {
+impl<'t, M, S> Segment<Cow<'t, str>, M, S> {
+    pub fn into_owned(self) -> Segment<Cow<'static, str>, M, S> {
+        let Segment { text, transform } = self;
+        Segment {
+            text: text.into_owned(),
+            transform,
+        }
+    }
+}
+
+impl<T, M, S> AsRef<str> for Segment<T, M, S>
+where
+    T: AsRef<str>,
+{
     fn as_ref(&self) -> &str {
         self.text.as_ref()
     }
 }
 
-impl<'t, M, S> BlockLayout<'t> for Segment<'t, M, S>
+impl<T, M, S> BlockLayout for Segment<T, M, S>
 where
-    M: Morpheme<'t>,
+    T: Unicode,
+    M: MorphemeFamily,
 {
     fn ascii_line_break_bounds(&self) -> BoundingBox {
         BoundingBox {
@@ -986,27 +1148,38 @@ where
     }
 }
 
-impl<'t, M, S> Encoded<'t> for Segment<'t, M, S>
+impl<T, M, S> Encoded for Segment<T, M, S>
 where
-    M: Morpheme<'t>,
+    T: Unicode,
+    M: MorphemeFamily,
 {
-    type Morpheme = M;
+    type MorphemeFamily = M;
 }
 
-impl<'t, M, S> LinearLayout<'t> for Segment<'t, M, S> where M: Morpheme<'t> {}
-
-impl<'t, M, S> TryFrom<Text<'t, M>> for Segment<'t, M, S>
+impl<T, M, S> LinearLayout for Segment<T, M, S>
 where
+    T: Unicode,
+    M: MorphemeFamily,
+{
+}
+
+impl<T, M, S> TryFrom<Text<T, M>> for Segment<T, M, S>
+where
+    T: AsRef<str> + Unchecked + Unicode,
+    M: MorphemeFamily,
     S: Default,
 {
     type Error = ControlError;
 
-    fn try_from(text: Text<'t, M>) -> Result<Self, Self::Error> {
+    fn try_from(text: Text<T, M>) -> Result<Self, Self::Error> {
         Segment::try_from_text_with_transform(text, S::default())
     }
 }
 
-impl<M, S> Unicode for Segment<'_, M, S> {
+impl<T, M, S> Unicode for Segment<T, M, S>
+where
+    T: Unicode,
+{
     fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Grapheme<'_>>> {
         self.text.graphemes()
     }
@@ -1016,37 +1189,41 @@ impl<M, S> Unicode for Segment<'_, M, S> {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct SegmentedIndex {
+    pub segment: usize,
+    pub byte: usize,
+}
+
 // TODO: The derived implementations do not depend on the type parameter `M`. Implement them
 //       explicitly to reflect this.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct Line<'t, M = Flex<'t>, S = ()> {
+pub struct Line<T, M = FlexFamily, S = ()> {
     // TODO: Perhaps segments ought to be stored in a `VecDeque` instead? If prepending becomes
     //       necessary in code written against `Line`, consider making this change.
-    segments: Vec<Segment<'t, M, S>>,
+    segments: Vec<Segment<T, M, S>>,
 }
 
-impl<'t, M, S> Line<'t, M, S> {
+impl<T, M, S> Line<T, M, S> {
     pub const fn empty() -> Self {
         Line {
             segments: Vec::new(),
         }
     }
 
-    pub fn into_owned(self) -> Line<'static, M, S> {
-        let Line { segments } = self;
-        Line {
-            segments: segments.into_iter().map(Segment::into_owned).collect(),
-        }
-    }
-
-    pub fn push(&mut self, segment: impl Into<Segment<'t, M, S>>) {
+    pub fn push(&mut self, segment: impl Into<Segment<T, M, S>>) {
         self.segments.push(segment.into());
     }
 
-    pub fn segments(&self) -> &[Segment<'t, M, S>] {
+    pub fn segments(&self) -> &[Segment<T, M, S>] {
         self.segments.as_slice()
     }
+}
 
+impl<T, M, S> Line<T, M, S>
+where
+    T: AsRef<str>,
+{
     pub fn to_string(&self) -> Cow<'_, str> {
         let segments = self.segments();
         match segments.len() {
@@ -1057,9 +1234,44 @@ impl<'t, M, S> Line<'t, M, S> {
     }
 }
 
-impl<'t, M, S> BlockLayout<'t> for Line<'t, M, S>
+impl<T, M, S> Line<T, M, S>
 where
-    M: Morpheme<'t>,
+    T: Unicode,
+{
+    // TODO: Hmm, this seems like the index type ought to be an associated type for `graphemes` and
+    //       `morphemes`, rather than using a bespoke function here. The `usize` index in
+    //       `Line::graphemes` is basically nonsense!
+    pub fn segmentation(
+        &self,
+    ) -> impl '_ + Clone + Iterator<Item = Indexed<Grapheme<'_>, SegmentedIndex>> {
+        self.segments
+            .iter()
+            .enumerate()
+            .flat_map(|(index, segment)| {
+                segment.graphemes().map(move |grapheme| Indexed {
+                    index: SegmentedIndex {
+                        segment: index,
+                        byte: grapheme.index,
+                    },
+                    text: grapheme.text,
+                })
+            })
+    }
+}
+
+impl<'t, M, S> Line<Cow<'t, str>, M, S> {
+    pub fn into_owned(self) -> Line<Cow<'static, str>, M, S> {
+        let Line { segments } = self;
+        Line {
+            segments: segments.into_iter().map(Segment::into_owned).collect(),
+        }
+    }
+}
+
+impl<T, M, S> BlockLayout for Line<T, M, S>
+where
+    T: Unicode,
+    M: MorphemeFamily,
 {
     fn ascii_line_break_bounds(&self) -> BoundingBox {
         BoundingBox {
@@ -1070,7 +1282,7 @@ where
     }
 }
 
-impl<'t, M, S> Default for Line<'t, M, S> {
+impl<T, M, S> Default for Line<T, M, S> {
     fn default() -> Self {
         Line {
             segments: Default::default(),
@@ -1078,31 +1290,40 @@ impl<'t, M, S> Default for Line<'t, M, S> {
     }
 }
 
-impl<'t, M, S> Encoded<'t> for Line<'t, M, S>
+impl<T, M, S> Encoded for Line<T, M, S>
 where
-    M: Morpheme<'t>,
+    T: Unicode,
+    M: MorphemeFamily,
 {
-    type Morpheme = M;
+    type MorphemeFamily = M;
 }
 
-impl<'t, M, S> From<Vec<Segment<'t, M, S>>> for Line<'t, M, S> {
-    fn from(segments: Vec<Segment<'t, M, S>>) -> Self {
+impl<T, M, S> From<Vec<Segment<T, M, S>>> for Line<T, M, S> {
+    fn from(segments: Vec<Segment<T, M, S>>) -> Self {
         Line { segments }
     }
 }
 
-impl<'t, M, S> FromIterator<Segment<'t, M, S>> for Line<'t, M, S> {
+impl<T, M, S> FromIterator<Segment<T, M, S>> for Line<T, M, S> {
     fn from_iter<I>(input: I) -> Self
     where
-        I: IntoIterator<Item = Segment<'t, M, S>>,
+        I: IntoIterator<Item = Segment<T, M, S>>,
     {
         Line::from(input.into_iter().collect::<Vec<_>>())
     }
 }
 
-impl<'t, M, S> LinearLayout<'t> for Line<'t, M, S> where M: Morpheme<'t> {}
+impl<T, M, S> LinearLayout for Line<T, M, S>
+where
+    T: Unicode,
+    M: MorphemeFamily,
+{
+}
 
-impl<'t, M, S> Unicode for Line<'t, M, S> {
+impl<T, M, S> Unicode for Line<T, M, S>
+where
+    T: Unicode,
+{
     fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Grapheme<'_>>> {
         self.segments.as_slice().graphemes()
     }
