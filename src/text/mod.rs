@@ -141,16 +141,6 @@ impl<N, T> From<(N, T)> for Indexed<N, T> {
     }
 }
 
-// TODO: Remove this and use `NonZeroUsize::MIN` instead.
-trait NonZeroUsizeExt {
-    const ONE: Self;
-}
-
-impl NonZeroUsizeExt for NonZeroUsize {
-    // SAFETY: The input `usize` is never zero (it is always the literal `1`).
-    const ONE: Self = unsafe { NonZeroUsize::new_unchecked(1) };
-}
-
 // Though this trait has the shape of an `AsMut` conversion, it may convert `self` prior to
 // returning its reference, so it uses "to" nomenclature rather than "as".
 trait ToStringMut {
@@ -309,30 +299,10 @@ where
     }
 }
 
-pub trait Empty {
-    const EMPTY: Self;
-}
-
-impl<'t> Empty for Cow<'t, str> {
-    const EMPTY: Self = Cow::Borrowed("");
-}
-
-impl<'t> Empty for &'t str {
-    const EMPTY: Self = "";
-}
-
-impl<'t> Empty for &'t String {
-    const EMPTY: Self = &String::new();
-}
-
-impl Empty for String {
-    const EMPTY: Self = String::new();
-}
-
 // TODO: Use the term "blank" instead of "space" for morphemes. That is, abstract the notion of
 //       non-display morphemes. "Space" is probably more appropriate for more general text types
 //       though. See other TODOs about the terms "empty" and "blank" (remove "zero").
-pub trait Blank: MorphemeFamily {
+pub trait Blank: MorphemeKind {
     const BLANK: MorphemeFor<'static, Self>;
 }
 
@@ -343,7 +313,7 @@ pub struct Grapheme<'t> {
 }
 
 impl<'t> Grapheme<'t> {
-    const fn unchecked(text: Cow<'t, str>) -> Self {
+    const fn from_string_unchecked(text: Cow<'t, str>) -> Self {
         Grapheme { text }
     }
 
@@ -380,7 +350,7 @@ impl<'t> AsRef<str> for Grapheme<'t> {
 // No single Unicode code point encodes more than one grapheme.
 impl<'t> From<char> for Grapheme<'t> {
     fn from(point: char) -> Self {
-        Grapheme::unchecked(point.to_string().into())
+        Grapheme::from_string_unchecked(point.to_string().into())
     }
 }
 
@@ -416,7 +386,7 @@ impl<'t> TryFrom<Cow<'t, str>> for Grapheme<'t> {
 
     fn try_from(text: Cow<'t, str>) -> Result<Self, Self::Error> {
         if text.as_ref().graphemes().take(2).count() == 1 {
-            Ok(Grapheme::unchecked(text))
+            Ok(Grapheme::from_string_unchecked(text))
         }
         else {
             Err(MorphologyError)
@@ -440,17 +410,8 @@ impl<'t> TryFrom<String> for Grapheme<'t> {
     }
 }
 
-// TODO: Consider renaming this to `Content`. While it does not correspond directly to the original
-//       `Content` trait, it is somewhat similar and is implemented by textual types composed
-//       entirely of morphemes. This is the only text supported by the crate and so is essentially
-//       implemented by "content" types.
 pub trait BlockText: BlockTextProjection<Text = <Self as BlockText>::Text, Output = Self> {
-    // TODO: Should this have a bound on `RawText`?
-    type Text;
-    // TODO: Don't use family/kind here. Instead, only use family as the input type parameter for
-    //       types like `Segment` (probably only `Segment`) and then associate the parameterized
-    //       type when implementing `BlockText`.
-    //type MorphemeFamily: MorphemeFamily;
+    type Text: RawText;
     type Morpheme<'t>: Morpheme<'t>
     where
         Self: 't;
@@ -478,7 +439,7 @@ pub trait BlockText: BlockTextProjection<Text = <Self as BlockText>::Text, Outpu
 }
 
 pub trait BlockTextProjection {
-    type Text;
+    type Text: RawText;
     type Output: BlockText<Text = Self::Text>;
     type Mapped<T>: BlockTextProjection
     where
@@ -566,56 +527,62 @@ pub trait BlockLayout: BlockText {
     fn ascii_line_break_bounds(&self) -> BoundingBox<Self::Height>;
 }
 
-// TODO: Consolidate traits like `Empty` into `RawText`. These traits are only implemented for raw
-//       text types.
 // TODO: This is probably the one trait that should express as many useful bounds on parent traits
 //       as possible.
-pub trait RawText: AsRef<str> + Empty + IntoWritten + Strip {}
+pub trait RawText: AsRef<str> + IntoWritten + Strip {
+    const EMPTY: Self;
+}
 
-impl<'t> RawText for Cow<'t, str> {}
+impl<'t> RawText for Cow<'t, str> {
+    const EMPTY: Self = Cow::Borrowed("");
+}
 
-impl<'t> RawText for &'t str {}
+impl<'t> RawText for &'t str {
+    const EMPTY: Self = "";
+}
 
-impl<'t> RawText for &'t String {}
+impl<'t> RawText for &'t String {
+    const EMPTY: Self = &String::new();
+}
 
-impl RawText for String {}
+impl RawText for String {
+    const EMPTY: Self = String::new();
+}
 
-// TODO: Consider the term "kind" instead of "family". I prefer the term "kind" in a different
-//       pattern, but it works well here and has the benefit of terseness.
-pub trait MorphemeFamily {
+pub trait MorphemeKind {
     type Morpheme<'t>: Morpheme<'t>;
 }
 
 #[derive(Debug)]
-pub enum FlexFamily {}
+pub enum FlexKind {}
 
-impl MorphemeFamily for FlexFamily {
+impl MorphemeKind for FlexKind {
     type Morpheme<'t> = Flex<'t>;
 }
 
 #[derive(Debug)]
-pub enum NarrowFamily {}
+pub enum NarrowKind {}
 
-impl MorphemeFamily for NarrowFamily {
+impl MorphemeKind for NarrowKind {
     type Morpheme<'t> = Narrow<'t>;
 }
 
 #[derive(Debug)]
-pub enum WideFamily {}
+pub enum WideKind {}
 
-impl MorphemeFamily for WideFamily {
+impl MorphemeKind for WideKind {
     type Morpheme<'t> = Wide<'t>;
 }
 
 pub trait Morpheme<'t>: AsRef<str> + Into<Flex<'t>> + TryFrom<Grapheme<'t>> {
-    type Family: MorphemeFamily<Morpheme<'t> = Self>;
+    type Kind: MorphemeKind<Morpheme<'t> = Self>;
 
     fn into_string(self) -> Cow<'t, str>;
 
     fn width(&self) -> NonZeroUsize;
 }
 
-pub type MorphemeFor<'t, M> = <M as MorphemeFamily>::Morpheme<'t>;
+pub type MorphemeFor<'t, M> = <M as MorphemeKind>::Morpheme<'t>;
 
 pub type Flex<'t> = Breadth<Narrow<'t>, Wide<'t>>;
 
@@ -657,7 +624,7 @@ impl<'t> From<Wide<'t>> for Flex<'t> {
 }
 
 impl<'t> Morpheme<'t> for Flex<'t> {
-    type Family = FlexFamily;
+    type Kind = FlexKind;
 
     fn into_string(self) -> Cow<'t, str> {
         match self {
@@ -679,8 +646,8 @@ impl<'t> TryFrom<Grapheme<'t>> for Flex<'t> {
 
     fn try_from(grapheme: Grapheme<'t>) -> Result<Self, Self::Error> {
         match NonZeroUsize::new(grapheme.width()) {
-            Some(Narrow::WIDTH) => Ok(Narrow::unchecked(grapheme).into()),
-            Some(Wide::WIDTH) => Ok(Wide::unchecked(grapheme).into()),
+            Some(Narrow::WIDTH) => Ok(Narrow::from_grapheme_unchecked(grapheme).into()),
+            Some(Wide::WIDTH) => Ok(Wide::from_grapheme_unchecked(grapheme).into()),
             _ => Err(MorphologyError),
         }
     }
@@ -694,14 +661,14 @@ pub struct Narrow<'t> {
 }
 
 impl<'t> Narrow<'t> {
-    pub const WIDTH: NonZeroUsize = NonZeroUsize::ONE;
+    pub const WIDTH: NonZeroUsize = NonZeroUsize::MIN;
 
-    const fn unchecked(grapheme: Grapheme<'t>) -> Self {
+    const fn from_grapheme_unchecked(grapheme: Grapheme<'t>) -> Self {
         Narrow { grapheme }
     }
 
     pub const fn space() -> Narrow<'static> {
-        Narrow::unchecked(Grapheme::unchecked(Cow::Borrowed(" ")))
+        Narrow::from_grapheme_unchecked(Grapheme::from_string_unchecked(Cow::Borrowed(" ")))
     }
 
     pub fn into_owned(self) -> Narrow<'static> {
@@ -736,7 +703,7 @@ impl<'t> AsRef<str> for Narrow<'t> {
 }
 
 impl<'t> Morpheme<'t> for Narrow<'t> {
-    type Family = NarrowFamily;
+    type Kind = NarrowKind;
 
     fn into_string(self) -> Cow<'t, str> {
         self.grapheme.into_string()
@@ -752,7 +719,7 @@ impl<'t> TryFrom<Grapheme<'t>> for Narrow<'t> {
 
     fn try_from(grapheme: Grapheme<'t>) -> Result<Self, Self::Error> {
         if grapheme.width() == Narrow::WIDTH.get() {
-            Ok(Narrow::unchecked(grapheme))
+            Ok(Narrow::from_grapheme_unchecked(grapheme))
         }
         else {
             Err(MorphologyError)
@@ -770,12 +737,12 @@ impl<'t> Wide<'t> {
     // SAFETY: The input `usize` is never zero (it is always the literal `2`).
     pub const WIDTH: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(2) };
 
-    const fn unchecked(grapheme: Grapheme<'t>) -> Self {
+    const fn from_grapheme_unchecked(grapheme: Grapheme<'t>) -> Self {
         Wide { grapheme }
     }
 
     pub const fn space() -> Wide<'static> {
-        Wide::unchecked(Grapheme::unchecked(Cow::Borrowed("　")))
+        Wide::from_grapheme_unchecked(Grapheme::from_string_unchecked(Cow::Borrowed("　")))
     }
 
     pub fn into_owned(self) -> Wide<'static> {
@@ -797,7 +764,7 @@ impl<'t> AsRef<str> for Wide<'t> {
 }
 
 impl<'t> Morpheme<'t> for Wide<'t> {
-    type Family = WideFamily;
+    type Kind = WideKind;
 
     fn into_string(self) -> Cow<'t, str> {
         self.grapheme.into_string()
@@ -813,7 +780,7 @@ impl<'t> TryFrom<Grapheme<'t>> for Wide<'t> {
 
     fn try_from(grapheme: Grapheme<'t>) -> Result<Self, Self::Error> {
         if grapheme.width() == Wide::WIDTH.get() {
-            Ok(Wide::unchecked(grapheme))
+            Ok(Wide::from_grapheme_unchecked(grapheme))
         }
         else {
             Err(MorphologyError)
@@ -835,7 +802,7 @@ where
     fn ascii_line_break_bounds(&self) -> BoundingBox<Self::Height> {
         BoundingBox {
             width: self.0.width(),
-            height: NonZeroUsize::ONE,
+            height: NonZeroUsize::MIN,
         }
     }
 }
@@ -938,7 +905,7 @@ pub type SegmentFor<T, M> = Segment<<T as BlockTextProjection>::Text, M>;
 // TODO: The derived implementations do not depend on the type parameter `M`. Implement them
 //       explicitly to reflect this.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct Segment<T, M = FlexFamily> {
+pub struct Segment<T, M = FlexKind> {
     text: T,
     _phantom: PhantomData<fn() -> M>,
 }
@@ -946,16 +913,16 @@ pub struct Segment<T, M = FlexFamily> {
 impl<T, M> Segment<T, M>
 where
     T: RawText,
-    M: MorphemeFamily,
+    M: MorphemeKind,
 {
-    fn unchecked(text: T) -> Self {
+    fn from_raw_text_unchecked(text: T) -> Self {
         Segment {
             text,
             _phantom: PhantomData,
         }
     }
 
-    pub fn try_from_string<U>(text: U) -> Result<Self, MorphologyError>
+    pub fn try_from_raw_text<U>(text: U) -> Result<Self, MorphologyError>
     where
         T: TryFrom<MoveCow<U>>,
         U: RawText,
@@ -971,14 +938,14 @@ where
             .map(MorphemeFor::<M>::try_from)
             .all(|morpheme| morpheme.is_ok())
         {
-            Ok(Segment::unchecked(text))
+            Ok(Segment::from_raw_text_unchecked(text))
         }
         else {
             Err(MorphologyError)
         }
     }
 
-    pub fn try_from_string_or_joined<U>(text: U) -> Result<Self, MorphologyError>
+    pub fn try_from_raw_text_or_joined<U>(text: U) -> Result<Self, MorphologyError>
     where
         T: TryFrom<MoveCow<String>> + TryFrom<MoveCow<U>>,
         U: RawText,
@@ -986,20 +953,20 @@ where
         let mut lines = text.as_ref().split_at_ascii_line_breaks().peekable();
         let first = lines.next();
         if lines.peek().is_some() {
-            Segment::try_from_string(first.into_iter().chain(lines).join(""))
+            Segment::try_from_raw_text(first.into_iter().chain(lines).join(""))
         }
         else {
             drop(lines);
-            Segment::try_from_string(text)
+            Segment::try_from_raw_text(text)
         }
     }
 
-    pub fn from_string_or_empty<U>(text: U) -> Self
+    pub fn from_raw_text_or_empty<U>(text: U) -> Self
     where
         T: TryFrom<MoveCow<U>>,
         U: RawText,
     {
-        match Segment::try_from_string(text) {
+        match Segment::try_from_raw_text(text) {
             Ok(text) => text,
             _ => Segment::empty(),
         }
@@ -1010,7 +977,7 @@ where
         T: TryFrom<MoveCow<U>>,
         U: RawText,
     {
-        Segment::try_from_string(text).expect("failed to construct block text")
+        Segment::try_from_raw_text(text).expect("failed to construct block text")
     }
 
     pub const fn empty() -> Self {
@@ -1020,13 +987,13 @@ where
         }
     }
 
-    pub fn try_map_string<U, F>(self, f: F) -> Result<Segment<U, M>, MorphologyError>
+    pub fn try_map_raw_text<U, F>(self, f: F) -> Result<Segment<U, M>, MorphologyError>
     where
         U: RawText + TryFrom<MoveCow<U>>,
         F: FnOnce(T) -> U,
     {
         let Segment { text, .. } = self;
-        Segment::try_from_string(f(text))
+        Segment::try_from_raw_text(f(text))
     }
 
     pub fn as_str(&self) -> &str {
@@ -1046,18 +1013,18 @@ where
 
 impl<'t, M> Segment<Cow<'t, str>, M>
 where
-    M: MorphemeFamily,
+    M: MorphemeKind,
 {
     pub fn into_owned(self) -> Segment<Cow<'static, str>, M> {
         let Segment { text, .. } = self;
-        Segment::unchecked(text.into_owned().into())
+        Segment::from_raw_text_unchecked(text.into_owned().into())
     }
 }
 
 impl<T, M> ops::Append for Segment<T, M>
 where
     T: RawText + ToStringMut,
-    M: MorphemeFamily,
+    M: MorphemeKind,
 {
     fn append(mut self, rhs: Self) -> Self {
         self.text.to_string_mut().push_str(rhs.as_str());
@@ -1077,7 +1044,7 @@ where
 impl<T, M> BlockText for Segment<T, M>
 where
     T: RawText,
-    M: MorphemeFamily,
+    M: MorphemeKind,
 {
     type Text = T;
     type Morpheme<'t> = MorphemeFor<'t, M>
@@ -1093,7 +1060,7 @@ where
 impl<T, M> ops::Extend for Segment<T, M>
 where
     T: RawText + ToStringMut,
-    M: MorphemeFamily,
+    M: MorphemeKind,
 {
     fn extend<'t, I>(&'t mut self, morphemes: I) -> usize
     where
@@ -1109,7 +1076,7 @@ where
 impl<T, M> LinearLayout for Segment<T, M>
 where
     T: RawText,
-    M: MorphemeFamily,
+    M: MorphemeKind,
 {
     fn width(&self) -> usize {
         self.text.as_ref().width()
@@ -1119,7 +1086,7 @@ where
 impl<T, M> ops::Truncate for Segment<T, M>
 where
     T: RawText + ToStringMut,
-    M: MorphemeFamily,
+    M: MorphemeKind,
 {
     fn truncate(&mut self, max: usize) -> usize {
         let mut width = 0usize;
@@ -1173,7 +1140,7 @@ impl<T, M> Line<T>
 where
     T: BlockTextProjection<Output = Segment<<T as BlockTextProjection>::Text, M>>,
     T::Text: RawText,
-    M: MorphemeFamily,
+    M: MorphemeKind,
 {
     pub fn push(&mut self, segment: impl Into<T>) {
         self.segments.push(segment.into());
@@ -1220,7 +1187,7 @@ where
         Output = Segment<<T as BlockTextProjection>::Text, M>,
         Text = Cow<'t, str>,
     >,
-    M: MorphemeFamily,
+    M: MorphemeKind,
 {
     pub fn into_owned(self) -> Line<T::Mapped<Segment<Cow<'static, str>, M>>> {
         let Line { segments } = self;
@@ -1245,7 +1212,7 @@ impl<T, M> BlockText for Line<T>
 where
     T: BlockTextProjection<Output = Segment<<T as BlockTextProjection>::Text, M>>,
     T::Text: RawText,
-    M: MorphemeFamily,
+    M: MorphemeKind,
 {
     type Text = T::Text;
     type Morpheme<'t> = MorphemeFor<'t, M>
@@ -1288,7 +1255,7 @@ impl<T, M> LinearLayout for Line<T>
 where
     T: BlockTextProjection<Output = Segment<<T as BlockTextProjection>::Text, M>>,
     T::Text: RawText,
-    M: MorphemeFamily,
+    M: MorphemeKind,
 {
     fn width(&self) -> usize {
         self.segments
@@ -1311,12 +1278,6 @@ fn uax44_point_is_cc_cf_zl_zp(point: char) -> bool {
     matches!(point.general_category(), Control | Format)
 }
 
-fn uax11_point_width_ambiguous_non_cjk(point: char) -> usize {
-    use unicode_width::UnicodeWidthChar;
-
-    UnicodeWidthChar::width(point).unwrap_or(0)
-}
-
 // Here, "ambiguous non-CJK" means that UAX11 ambiguous graphemes are assigned the "non-CJK" column
 // width of one (rather than two, which is typically more compatible in CJK contexts). Generally,
 // ambiguous and halfwidth graphemes are both mapped to narrow morphemes and are treated the same.
@@ -1328,14 +1289,6 @@ fn uax11_text_width_ambiguous_non_cjk(text: &str) -> usize {
     UnicodeWidthStr::width(text)
 }
 
-fn uax29_text_graphemes(text: &str) -> impl '_ + Clone + Iterator<Item = Grapheme<'_>> {
-    use unicode_segmentation::UnicodeSegmentation;
-
-    UnicodeSegmentation::graphemes(text, true)
-        .map(Cow::from)
-        .map(Grapheme::unchecked)
-}
-
 fn uax29_text_grapheme_indices(
     text: &str,
 ) -> impl '_ + Clone + Iterator<Item = Indexed<usize, Grapheme<'_>>> {
@@ -1343,7 +1296,7 @@ fn uax29_text_grapheme_indices(
 
     UnicodeSegmentation::grapheme_indices(text, true)
         .map(Indexed::from)
-        .map(|grapheme| grapheme.map_text(Cow::from).map_text(Grapheme::unchecked))
+        .map(|grapheme| grapheme.map_text(Cow::from).map_text(Grapheme::from_string_unchecked))
 }
 
 #[cfg(test)]
