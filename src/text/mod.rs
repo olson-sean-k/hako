@@ -410,8 +410,10 @@ impl<'t> TryFrom<String> for Grapheme<'t> {
     }
 }
 
-pub trait BlockText: BlockTextProjection<Text = <Self as BlockText>::Text, Output = Self> {
-    type Text: RawText;
+pub trait BlockText:
+    BlockTextProjection<RawText = <Self as BlockText>::RawText, BlockText = Self>
+{
+    type RawText: RawText;
     type Morpheme<'t>: Morpheme<'t>
     where
         Self: 't;
@@ -419,7 +421,7 @@ pub trait BlockText: BlockTextProjection<Text = <Self as BlockText>::Text, Outpu
 
     fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Self::Index, Grapheme<'_>>>;
 
-    // TODO: `Encoded` types must never allow construction from text containing non-morphemes.
+    // TODO: `BlockText` types must never allow construction from text containing non-morphemes.
     //       Ideally then, this function need not examine the text and can instead construct
     //       morphemes via `unchecked`! In a default implementation though, shenanigans are
     //       possible, especially if downstream code implements this trait (which would implicitly
@@ -439,35 +441,35 @@ pub trait BlockText: BlockTextProjection<Text = <Self as BlockText>::Text, Outpu
 }
 
 pub trait BlockTextProjection {
-    type Text: RawText;
-    type Output: BlockText<Text = Self::Text>;
+    type RawText: RawText;
+    type BlockText: BlockText<RawText = Self::RawText>;
     type Mapped<T>: BlockTextProjection
     where
         T: BlockText;
 
-    fn into_block_text(self) -> Self::Output;
+    fn into_block_text(self) -> Self::BlockText;
 
     fn map_block_text<T, F>(self, f: F) -> Self::Mapped<T>
     where
         T: BlockText,
-        F: FnOnce(Self::Output) -> T;
+        F: FnOnce(Self::BlockText) -> T;
 
-    fn as_block_text(&self) -> &Self::Output;
+    fn as_block_text(&self) -> &Self::BlockText;
 
-    fn as_block_text_mut(&mut self) -> &mut Self::Output;
+    fn as_block_text_mut(&mut self) -> &mut Self::BlockText;
 }
 
 impl<T> BlockTextProjection for T
 where
     T: BlockText,
 {
-    type Text = <T as BlockText>::Text;
-    type Output = T;
+    type RawText = <T as BlockText>::RawText;
+    type BlockText = T;
     type Mapped<U> = U
     where
         U: BlockText;
 
-    fn into_block_text(self) -> Self::Output {
+    fn into_block_text(self) -> Self::BlockText {
         self
     }
 
@@ -478,7 +480,7 @@ where
     fn map_block_text<U, F>(self, f: F) -> Self::Mapped<U>
     where
         U: BlockText,
-        F: FnOnce(Self::Output) -> U,
+        F: FnOnce(Self::BlockText) -> U,
     {
         use std::mem;
 
@@ -487,11 +489,11 @@ where
         unsafe { mem::transmute_copy::<U, Self::Mapped<U>>(&f(self)) }
     }
 
-    fn as_block_text(&self) -> &Self::Output {
+    fn as_block_text(&self) -> &Self::BlockText {
         self
     }
 
-    fn as_block_text_mut(&mut self) -> &mut Self::Output {
+    fn as_block_text_mut(&mut self) -> &mut Self::BlockText {
         self
     }
 }
@@ -811,7 +813,7 @@ impl<'t, T> BlockText for AsBlockLayout<'t, T>
 where
     T: BlockText,
 {
-    type Text = <T as BlockText>::Text;
+    type RawText = <T as BlockText>::RawText;
     type Morpheme<'m> = T::Morpheme<'m>
     where
         Self: 'm;
@@ -870,34 +872,34 @@ impl<T, A> BlockTextProjection for Annotated<T, A>
 where
     T: BlockText,
 {
-    type Text = <T as BlockText>::Text;
-    type Output = T;
+    type RawText = <T as BlockText>::RawText;
+    type BlockText = T;
     type Mapped<U> = Annotated<U, A>
     where
         U: BlockText;
 
-    fn into_block_text(self) -> Self::Output {
+    fn into_block_text(self) -> Self::BlockText {
         self.text
     }
 
     fn map_block_text<U, F>(self, f: F) -> Self::Mapped<U>
     where
         U: BlockText,
-        F: FnOnce(Self::Output) -> U,
+        F: FnOnce(Self::BlockText) -> U,
     {
         self.map_text(f)
     }
 
-    fn as_block_text(&self) -> &Self::Output {
+    fn as_block_text(&self) -> &Self::BlockText {
         &self.text
     }
 
-    fn as_block_text_mut(&mut self) -> &mut Self::Output {
+    fn as_block_text_mut(&mut self) -> &mut Self::BlockText {
         &mut self.text
     }
 }
 
-pub type SegmentFor<T, M> = Segment<<T as BlockTextProjection>::Text, M>;
+pub type SegmentFor<T, M> = Segment<<T as BlockTextProjection>::RawText, M>;
 
 // TODO: Segments ignore non-ASCII line breaks (by design). Make sure this is documented.
 // TODO: Consider `unicode-linebreak` or something similar if it seems that support for line
@@ -1046,7 +1048,7 @@ where
     T: RawText,
     M: MorphemeKind,
 {
-    type Text = T;
+    type RawText = T;
     type Morpheme<'t> = MorphemeFor<'t, M>
     where
         Self: 't;
@@ -1138,8 +1140,8 @@ impl<T> Line<T> {
 
 impl<T, M> Line<T>
 where
-    T: BlockTextProjection<Output = Segment<<T as BlockTextProjection>::Text, M>>,
-    T::Text: RawText,
+    T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>,
+    T::RawText: RawText,
     M: MorphemeKind,
 {
     pub fn push(&mut self, segment: impl Into<T>) {
@@ -1184,8 +1186,8 @@ where
 impl<'t, T, M> Line<T>
 where
     T: BlockTextProjection<
-        Output = Segment<<T as BlockTextProjection>::Text, M>,
-        Text = Cow<'t, str>,
+        BlockText = Segment<<T as BlockTextProjection>::RawText, M>,
+        RawText = Cow<'t, str>,
     >,
     M: MorphemeKind,
 {
@@ -1210,11 +1212,11 @@ impl<T> Default for Line<T> {
 
 impl<T, M> BlockText for Line<T>
 where
-    T: BlockTextProjection<Output = Segment<<T as BlockTextProjection>::Text, M>>,
-    T::Text: RawText,
+    T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>,
+    T::RawText: RawText,
     M: MorphemeKind,
 {
-    type Text = T::Text;
+    type RawText = T::RawText;
     type Morpheme<'t> = MorphemeFor<'t, M>
     where
         Self: 't;
@@ -1253,8 +1255,8 @@ impl<T> FromIterator<T> for Line<T> {
 
 impl<T, M> LinearLayout for Line<T>
 where
-    T: BlockTextProjection<Output = Segment<<T as BlockTextProjection>::Text, M>>,
-    T::Text: RawText,
+    T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>,
+    T::RawText: RawText,
     M: MorphemeKind,
 {
     fn width(&self) -> usize {
@@ -1296,7 +1298,11 @@ fn uax29_text_grapheme_indices(
 
     UnicodeSegmentation::grapheme_indices(text, true)
         .map(Indexed::from)
-        .map(|grapheme| grapheme.map_text(Cow::from).map_text(Grapheme::from_string_unchecked))
+        .map(|grapheme| {
+            grapheme
+                .map_text(Cow::from)
+                .map_text(Grapheme::from_string_unchecked)
+        })
 }
 
 #[cfg(test)]
