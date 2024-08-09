@@ -1,6 +1,6 @@
 use std::convert::Infallible;
 
-use crate::text::{BlockLayout, Encoded, LinearLayout, Morpheme, MorphemeFor, Narrow, Wide};
+use crate::text::{BlockLayout, BlockText, LinearLayout, Morpheme, Narrow, Wide};
 
 pub use Layer::{Back, Front};
 
@@ -17,10 +17,10 @@ pub struct Congruent<L, R> {
 }
 
 impl<L, R> Congruent<L, R> {
-    pub fn try_from_blocks<'t>(left: L, right: R) -> Result<Self, (L, R)>
+    pub fn try_from_blocks(left: L, right: R) -> Result<Self, (L, R)>
     where
         L: BlockLayout,
-        R: BlockLayout,
+        R: BlockLayout<Height = L::Height>,
     {
         if left.ascii_line_break_bounds() == right.ascii_line_break_bounds() {
             Ok(Congruent { left, right })
@@ -36,13 +36,13 @@ pub trait Truncate: LinearLayout {
 }
 
 pub trait Extend: LinearLayout {
-    fn extend<'t, I>(&mut self, morphemes: I) -> usize
+    fn extend<'t, I>(&'t mut self, morphemes: I) -> usize
     where
-        I: IntoIterator<Item = MorphemeFor<'t, Self::MorphemeFamily>>;
+        I: IntoIterator<Item = Self::Morpheme<'t>>;
 
-    fn fill<'t, I>(&mut self, min: usize, morphemes: I) -> usize
+    fn fill<'t, I>(&'t mut self, min: usize, morphemes: I) -> usize
     where
-        I: IntoIterator<Item = MorphemeFor<'t, Self::MorphemeFamily>>,
+        I: IntoIterator<Item = Self::Morpheme<'t>>,
         I::IntoIter: Clone,
     {
         let mut width = self.width();
@@ -130,21 +130,23 @@ where
     Expand(Expand<'t, 'o>),
 }
 
-pub trait Overlay: Encoded {
+pub trait Overlay: BlockText {
     type Blend<'o>;
-    type Output: Encoded;
+    type Output: BlockText;
 
-    fn overlay_with<F>(self, f: F) -> Self::Output
+    // TODO: The name `Output` in `BlockText` and friends is bad. Simplify this once it is renamed!
+    fn overlay_with<F>(self, f: F) -> <Self as Overlay>::Output
     where
         F: FnMut(Self::Blend<'_>) -> Receipt;
 }
 
-pub trait TryOverlay: Encoded {
+pub trait TryOverlay: BlockText {
     type Error;
     type Blend<'o>;
-    type Output: Encoded;
+    type Output: BlockText;
 
-    fn try_overlay_with<F>(self, f: F) -> Result<Self::Output, Self::Error>
+    // TODO: The name `Output` in `BlockText` and friends is bad. Simplify this once it is renamed!
+    fn try_overlay_with<F>(self, f: F) -> Result<<Self as TryOverlay>::Output, Self::Error>
     where
         F: FnMut(Self::Blend<'_>) -> Receipt;
 }
@@ -155,9 +157,11 @@ where
 {
     type Error = Infallible;
     type Blend<'o> = T::Blend<'o>;
-    type Output = T::Output;
+    // TODO: The name `Output` in `BlockText` and friends is bad. Simplify this once it is renamed!
+    type Output = <T as Overlay>::Output;
 
-    fn try_overlay_with<F>(self, f: F) -> Result<Self::Output, Self::Error>
+    // TODO: The name `Output` in `BlockText` and friends is bad. Simplify this once it is renamed!
+    fn try_overlay_with<F>(self, f: F) -> Result<<Self as TryOverlay>::Output, Self::Error>
     where
         F: FnMut(Self::Blend<'_>) -> Receipt,
     {

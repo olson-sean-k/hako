@@ -1,5 +1,9 @@
 use std::ops::Index;
 
+pub trait SliceIterator: DoubleEndedIterator + ExactSizeIterator {}
+
+impl<I> SliceIterator for I where I: DoubleEndedIterator + ExactSizeIterator {}
+
 pub trait SliceExt<T> {
     fn project<'a, U, F>(&'a self, f: F) -> ProjectedSlice<'a, T, F>
     where
@@ -22,7 +26,7 @@ pub trait SliceProjection: Index<usize, Output = Self::Item> {
 
     fn get(&self, index: usize) -> Option<&Self::Item>;
 
-    fn iter(&self) -> impl '_ + Clone + Iterator<Item = &'_ Self::Item>;
+    fn iter(&self) -> impl '_ + Clone + SliceIterator<Item = &'_ Self::Item>;
 
     fn len(&self) -> usize;
 
@@ -38,7 +42,7 @@ impl<T> SliceProjection for [T] {
         self.get(index)
     }
 
-    fn iter(&self) -> impl '_ + Clone + Iterator<Item = &'_ Self::Item> {
+    fn iter(&self) -> impl '_ + Clone + SliceIterator<Item = &'_ Self::Item> {
         self.iter()
     }
 
@@ -49,6 +53,8 @@ impl<T> SliceProjection for [T] {
 
 #[derive(Clone, Copy, Debug)]
 pub struct ProjectedSlice<'a, T, F> {
+    // TODO: Generalize this such that `SliceExt` is replaced by `SliceProjection::project` and
+    //       re-projection is possible.
     slice: &'a [T],
     f: F,
 }
@@ -76,7 +82,7 @@ where
         self.slice.get(index).map(|item| (self.f)(item))
     }
 
-    fn iter(&self) -> impl '_ + Clone + Iterator<Item = &'_ Self::Item> {
+    fn iter(&self) -> impl '_ + Clone + SliceIterator<Item = &'_ Self::Item> {
         self.slice.iter().map(|item| (self.f)(item))
     }
 
