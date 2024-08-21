@@ -49,10 +49,10 @@ pub trait IntoWritten {
 }
 
 impl<'t> IntoWritten for Cow<'t, str> {
-    type Written = Self;
+    type Written = String;
 
     fn into_written(self) -> Self::Written {
-        self
+        self.into_owned()
     }
 }
 
@@ -80,6 +80,7 @@ impl<'t> IntoWritten for &'t str {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MoveCow<T>
 where
     T: IntoWritten,

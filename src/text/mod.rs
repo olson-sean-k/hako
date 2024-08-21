@@ -61,6 +61,86 @@ impl From<Infallible> for BoundaryError {
     }
 }
 
+pub trait StrExt {
+    fn has_ascii_line_breaks(&self) -> bool;
+
+    // Control and layout points are CC, CF, ZL, and ZP. These general categories affect the flow
+    // and layout of text and the behavior of output targets like TTYs and printers.
+    fn has_control_or_layout_points(&self) -> bool;
+
+    fn split_at_ascii_line_breaks(&self) -> impl '_ + Iterator<Item = &'_ str>;
+
+    fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<usize, Grapheme<'_>>>;
+
+    fn width(&self) -> usize;
+}
+
+impl StrExt for str {
+    fn has_ascii_line_breaks(&self) -> bool {
+        // Detect any and all occurences of CR and LF. Note that both CR and LF are considered a
+        // line break even when not adjacent to another line breaking control character (i.e., a
+        // lone CR).
+        self.as_bytes().iter().copied().any(ucs_ascii_is_cr_lf)
+    }
+
+    fn has_control_or_layout_points(&self) -> bool {
+        self.chars().any(uax44_point_is_cc_cf_zl_zp)
+    }
+
+    // Splits over unpaired CR (unlike `str::lines`). Discards line breaking control characters.
+    // Exlcudes LS and PS, which are in the BMP but not ASCII. While CR and LF are the only line
+    // breaking control characters in ASCII, this function conceptually splits over ASCII control
+    // characters with **mandatory** Unicode line break properties.
+    fn split_at_ascii_line_breaks(&self) -> impl '_ + Iterator<Item = &'_ str> {
+        fn checkpoint(head: &mut usize, index: usize, n: usize) -> Range<usize> {
+            let range = *head..index.saturating_sub(n.saturating_sub(1));
+            *head = index
+                .checked_add(1)
+                .expect("overflow splitting text at ASCII line breaks");
+            range
+        }
+
+        // This implementation depends on CR and LF never occuring as part of a plural code point
+        // sequence in UTF-8. While this is true of CR and LF, it is **not true** for all BMP and
+        // Unicode line breaking code points!
+        let end = self.len();
+        let mut head = 0;
+        self.as_bytes()
+            .iter()
+            .copied()
+            .enumerate()
+            .peekable()
+            .batching(move |bytes| {
+                loop {
+                    return match bytes.next() {
+                        // Split over CR and CR LF sequences.
+                        Some((index, CR)) => Some(match bytes.peek().copied() {
+                            Some((index, LF)) => {
+                                bytes.next();
+                                checkpoint(&mut head, index, 2)
+                            }
+                            _ => checkpoint(&mut head, index, 1),
+                        }),
+                        // Split over LF.
+                        Some((index, LF)) => Some(checkpoint(&mut head, index, 1)),
+                        Some(_) => continue,
+                        // Yield the remainder at EoT.
+                        None => (head <= end).then(|| checkpoint(&mut head, end, 0)),
+                    };
+                }
+            })
+            .map(|range| self.get(range).expect("invalid UTF-8 slice"))
+    }
+
+    fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<usize, Grapheme<'_>>> {
+        uax29_text_grapheme_indices(self)
+    }
+
+    fn width(&self) -> usize {
+        uax11_text_width_ambiguous_non_cjk(self)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct Indexed<N, T> {
     pub index: N,
@@ -159,86 +239,6 @@ impl ToStringMut for String {
     }
 }
 
-pub trait StrExt {
-    fn has_ascii_line_breaks(&self) -> bool;
-
-    // Control and layout points are CC, CF, ZL, and ZP. These general categories affect the flow
-    // and layout of text and the behavior of output targets like TTYs and printers.
-    fn has_control_or_layout_points(&self) -> bool;
-
-    fn split_at_ascii_line_breaks(&self) -> impl '_ + Iterator<Item = &'_ str>;
-
-    fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<usize, Grapheme<'_>>>;
-
-    fn width(&self) -> usize;
-}
-
-impl StrExt for str {
-    fn has_ascii_line_breaks(&self) -> bool {
-        // Detect any and all occurences of CR and LF. Note that both CR and LF are considered a
-        // line break even when not adjacent to another line breaking control character (i.e., a
-        // lone CR).
-        self.as_bytes().iter().copied().any(ucs_ascii_is_cr_lf)
-    }
-
-    fn has_control_or_layout_points(&self) -> bool {
-        self.chars().any(uax44_point_is_cc_cf_zl_zp)
-    }
-
-    // Splits over unpaired CR (unlike `str::lines`). Discards line breaking control characters.
-    // Exlcudes LS and PS, which are in the BMP but not ASCII. While CR and LF are the only line
-    // breaking control characters in ASCII, this function conceptually splits over ASCII control
-    // characters with **mandatory** Unicode line break properties.
-    fn split_at_ascii_line_breaks(&self) -> impl '_ + Iterator<Item = &'_ str> {
-        fn checkpoint(head: &mut usize, index: usize, n: usize) -> Range<usize> {
-            let range = *head..index.saturating_sub(n.saturating_sub(1));
-            *head = index
-                .checked_add(1)
-                .expect("overflow splitting text at ASCII line breaks");
-            range
-        }
-
-        // This implementation depends on CR and LF never occuring as part of a plural code point
-        // sequence in UTF-8. While this is true of CR and LF, it is **not true** for all BMP and
-        // Unicode line breaking code points!
-        let end = self.len();
-        let mut head = 0;
-        self.as_bytes()
-            .iter()
-            .copied()
-            .enumerate()
-            .peekable()
-            .batching(move |bytes| {
-                loop {
-                    return match bytes.next() {
-                        // Split over CR and CR LF sequences.
-                        Some((index, CR)) => Some(match bytes.peek().copied() {
-                            Some((index, LF)) => {
-                                bytes.next();
-                                checkpoint(&mut head, index, 2)
-                            }
-                            _ => checkpoint(&mut head, index, 1),
-                        }),
-                        // Split over LF.
-                        Some((index, LF)) => Some(checkpoint(&mut head, index, 1)),
-                        Some(_) => continue,
-                        // Yield the remainder at EoT.
-                        None => (head <= end).then(|| checkpoint(&mut head, end, 0)),
-                    };
-                }
-            })
-            .map(|range| self.get(range).expect("invalid UTF-8 slice"))
-    }
-
-    fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<usize, Grapheme<'_>>> {
-        uax29_text_grapheme_indices(self)
-    }
-
-    fn width(&self) -> usize {
-        uax11_text_width_ambiguous_non_cjk(self)
-    }
-}
-
 pub trait Strip: IntoWritten + Sized {
     // Like `str::replace`, but strictly removes and does not copy when the `Pattern` matches
     // nothing.
@@ -299,11 +299,24 @@ where
     }
 }
 
-// TODO: Use the term "blank" instead of "space" for morphemes. That is, abstract the notion of
-//       non-display morphemes. "Space" is probably more appropriate for more general text types
-//       though. See other TODOs about the terms "empty" and "blank" (remove "zero").
-pub trait Blank: MorphemeKind {
-    const BLANK: MorphemeFor<'static, Self>;
+pub trait RawText: AsRef<str> + IntoWritten + Strip {
+    const EMPTY: Self;
+}
+
+impl<'t> RawText for Cow<'t, str> {
+    const EMPTY: Self = Cow::Borrowed("");
+}
+
+impl<'t> RawText for &'t str {
+    const EMPTY: Self = "";
+}
+
+impl<'t> RawText for &'t String {
+    const EMPTY: Self = &String::new();
+}
+
+impl RawText for String {
+    const EMPTY: Self = String::new();
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -529,30 +542,16 @@ pub trait BlockLayout: BlockText {
     fn ascii_line_break_bounds(&self) -> BoundingBox<Self::Height>;
 }
 
-// TODO: This is probably the one trait that should express as many useful bounds on parent traits
-//       as possible.
-pub trait RawText: AsRef<str> + IntoWritten + Strip {
-    const EMPTY: Self;
-}
-
-impl<'t> RawText for Cow<'t, str> {
-    const EMPTY: Self = Cow::Borrowed("");
-}
-
-impl<'t> RawText for &'t str {
-    const EMPTY: Self = "";
-}
-
-impl<'t> RawText for &'t String {
-    const EMPTY: Self = &String::new();
-}
-
-impl RawText for String {
-    const EMPTY: Self = String::new();
-}
-
-pub trait MorphemeKind {
+pub trait MorphemeKind: 'static {
     type Morpheme<'t>: Morpheme<'t>;
+}
+
+// TODO: Hmm, this is probably not useful.
+// TODO: Use the term "blank" instead of "space" for morphemes. That is, abstract the notion of
+//       non-display morphemes. "Space" is probably more appropriate for more general text types
+//       though. See other TODOs about the terms "empty" and "blank" (remove "zero").
+pub trait Blank: MorphemeKind {
+    const BLANK: MorphemeFor<'static, Self>;
 }
 
 #[derive(Debug)]
@@ -1141,11 +1140,16 @@ impl<T> Line<T> {
 impl<T, M> Line<T>
 where
     T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>,
-    T::RawText: RawText,
     M: MorphemeKind,
 {
     pub fn push(&mut self, segment: impl Into<T>) {
         self.segments.push(segment.into());
+    }
+
+    pub fn get(&self, index: usize) -> Option<&SegmentFor<T, M>> {
+        self.segments
+            .get(index)
+            .map(BlockTextProjection::as_block_text)
     }
 
     pub fn segments<'s>(&'s self) -> impl 's + SliceProjection<Item = SegmentFor<T, M>>
@@ -1185,10 +1189,7 @@ where
 
 impl<'t, T, M> Line<T>
 where
-    T: BlockTextProjection<
-        BlockText = Segment<<T as BlockTextProjection>::RawText, M>,
-        RawText = Cow<'t, str>,
-    >,
+    T: BlockTextProjection<BlockText = Segment<Cow<'t, str>, M>>,
     M: MorphemeKind,
 {
     pub fn into_owned(self) -> Line<T::Mapped<Segment<Cow<'static, str>, M>>> {
@@ -1213,7 +1214,6 @@ impl<T> Default for Line<T> {
 impl<T, M> BlockText for Line<T>
 where
     T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>,
-    T::RawText: RawText,
     M: MorphemeKind,
 {
     type RawText = T::RawText;
@@ -1256,7 +1256,6 @@ impl<T> FromIterator<T> for Line<T> {
 impl<T, M> LinearLayout for Line<T>
 where
     T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>,
-    T::RawText: RawText,
     M: MorphemeKind,
 {
     fn width(&self) -> usize {
