@@ -23,11 +23,11 @@ mod sealed {
 }
 
 pub trait Render {
+    fn render(&self) -> Cow<str>;
+
     fn render_into(&self, target: &mut impl Write) -> io::Result<()> {
         target.write_all(self.render().as_bytes())
     }
-
-    fn render(&self) -> Cow<str>;
 }
 
 impl<'t> Render for Cow<'t, str> {

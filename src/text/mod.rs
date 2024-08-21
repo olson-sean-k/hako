@@ -1,9 +1,11 @@
 pub mod ops;
+pub mod style;
 
 use itertools::Itertools;
 use std::borrow::Cow;
 use std::convert::Infallible;
 use std::fmt::Debug;
+use std::io::{self, Write};
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
 use std::ops::Range;
@@ -11,7 +13,7 @@ use std::slice::SliceIndex;
 
 use crate::breadth::Breadth;
 use crate::slice::{SliceExt as _, SliceProjection};
-use crate::{IntoWritten, MoveCow};
+use crate::{IntoWritten, MoveCow, Render};
 
 const CR: u8 = b'\r';
 const LF: u8 = b'\n';
@@ -823,10 +825,13 @@ where
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct Inert<T>(pub T);
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Annotated<T, A = ()> {
-    text: T,
-    annotation: A,
+    pub text: T,
+    pub annotation: A,
 }
 
 impl<T, A> Annotated<T, A> {
@@ -867,6 +872,19 @@ impl<T, A> Annotated<T, A> {
     }
 }
 
+impl<T, A> Annotated<T, Inert<A>> {
+    pub const fn inert(text: T, annotation: A) -> Self {
+        Annotated {
+            text,
+            annotation: Inert(annotation),
+        }
+    }
+
+    pub fn annotation(&self) -> &A {
+        &self.annotation.0
+    }
+}
+
 impl<T, A> BlockTextProjection for Annotated<T, A>
 where
     T: BlockText,
@@ -898,6 +916,19 @@ where
     }
 }
 
+impl<T, A> Render for Annotated<T, Inert<A>>
+where
+    T: Render,
+{
+    fn render(&self) -> Cow<str> {
+        self.text.render()
+    }
+
+    fn render_into(&self, target: &mut impl Write) -> io::Result<()> {
+        self.text.render_into(target)
+    }
+}
+
 pub type SegmentFor<T, M> = Segment<<T as BlockTextProjection>::RawText, M>;
 
 // TODO: Segments ignore non-ASCII line breaks (by design). Make sure this is documented.
@@ -905,10 +936,19 @@ pub type SegmentFor<T, M> = Segment<<T as BlockTextProjection>::RawText, M>;
 //       breaking Unicode control characters like LS and PS is justified.
 // TODO: The derived implementations do not depend on the type parameter `M`. Implement them
 //       explicitly to reflect this.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 pub struct Segment<T, M = FlexKind> {
     text: T,
     _phantom: PhantomData<fn() -> M>,
+}
+
+impl<T, M> Segment<T, M> {
+    fn from_raw_text_unchecked(text: T) -> Self {
+        Segment {
+            text,
+            _phantom: PhantomData,
+        }
+    }
 }
 
 impl<T, M> Segment<T, M>
@@ -916,13 +956,6 @@ where
     T: RawText,
     M: MorphemeKind,
 {
-    fn from_raw_text_unchecked(text: T) -> Self {
-        Segment {
-            text,
-            _phantom: PhantomData,
-        }
-    }
-
     pub fn try_from_raw_text<U>(text: U) -> Result<Self, MorphologyError>
     where
         T: TryFrom<MoveCow<U>>,
@@ -1010,6 +1043,10 @@ where
     ) -> impl 'b + BlockLayout<Morpheme<'b> = MorphemeFor<'b, M>, Index = usize> {
         AsBlockLayout(self)
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.text.as_ref().is_empty()
+    }
 }
 
 impl<'t, M> Segment<Cow<'t, str>, M>
@@ -1058,6 +1095,17 @@ where
     }
 }
 
+impl<T, M> Clone for Segment<T, M>
+where
+    T: Clone,
+{
+    fn clone(&self) -> Self {
+        Segment::from_raw_text_unchecked(self.text.clone())
+    }
+}
+
+impl<T, M> Copy for Segment<T, M> where T: Copy {}
+
 impl<T, M> ops::Extend for Segment<T, M>
 where
     T: RawText + ToStringMut,
@@ -1081,6 +1129,20 @@ where
 {
     fn width(&self) -> usize {
         self.text.as_ref().width()
+    }
+}
+
+impl<T, M> Render for Segment<T, M>
+where
+    T: RawText,
+    M: MorphemeKind,
+{
+    fn render(&self) -> Cow<str> {
+        self.text.as_ref().into()
+    }
+
+    fn render_into(&self, target: &mut impl Write) -> io::Result<()> {
+        target.write_all(self.text.as_ref().as_bytes())
     }
 }
 
@@ -1142,6 +1204,15 @@ where
     T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>,
     M: MorphemeKind,
 {
+    pub fn from_segments<I>(segments: I) -> Self
+    where
+        I: IntoIterator<Item = T>,
+    {
+        Line {
+            segments: segments.into_iter().collect(),
+        }
+    }
+
     pub fn push(&mut self, segment: impl Into<T>) {
         self.segments.push(segment.into());
     }
@@ -1184,6 +1255,14 @@ where
         &'b self,
     ) -> impl 'b + BlockLayout<Morpheme<'b> = MorphemeFor<'b, M>, Index = LineIndex> {
         AsBlockLayout(self)
+    }
+
+    pub fn has_segments(&self) -> bool {
+        !self.segments.is_empty()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.segments.is_empty() || self.segments().iter().all(|segment| segment.is_empty())
     }
 }
 
@@ -1267,6 +1346,28 @@ where
     }
 }
 
+impl<T> Render for Line<T>
+where
+    T: Render,
+{
+    fn render(&self) -> Cow<str> {
+        self.segments
+            .iter()
+            .fold(String::new(), |mut rendered, segment| {
+                rendered.push_str(segment.render().as_ref());
+                rendered
+            })
+            .into()
+    }
+
+    fn render_into(&self, target: &mut impl Write) -> io::Result<()> {
+        for segment in self.segments.iter() {
+            target.write_all(segment.render().as_bytes())?;
+        }
+        Ok(())
+    }
+}
+
 fn ucs_ascii_is_cr_lf(byte: u8) -> bool {
     matches!(byte, CR | LF)
 }
@@ -1306,7 +1407,10 @@ fn uax29_text_grapheme_indices(
 
 #[cfg(test)]
 mod tests {
-    use crate::text::StrExt as _;
+    use crate::text::{Annotated, FlexKind, Line, Segment, StrExt as _};
+    use crate::Render;
+
+    type FlexSegment<T> = Segment<T, FlexKind>;
 
     #[test]
     fn split_at_ascii_line_breaks() {
@@ -1325,5 +1429,32 @@ mod tests {
         assert_eq!(lines("\n\na"), vec!["", "", "a"]);
         assert_eq!(lines("a\n"), vec!["a", ""]);
         assert_eq!(lines("a\n\n"), vec!["a", "", ""]);
+    }
+
+    #[test]
+    fn render_block_text() {
+        let segment = FlexSegment::<&str>::try_from_raw_text("text").unwrap();
+        assert_eq!(segment.render(), "text");
+        let annotated = Annotated::inert(segment, 0usize);
+        assert_eq!(annotated.render(), "text");
+        let line = Line::from_segments([annotated.clone(), annotated]);
+        assert_eq!(line.render(), "texttext");
+    }
+
+    // TODO: Assert that the ANSI8 escape codes are present and correct in the rendered text.
+    #[cfg(feature = "owo-colors")]
+    #[test]
+    fn render_styled_block_text() {
+        use crate::text::style;
+
+        type StyledText<T> = style::StyledText<T, owo_colors::Style>;
+
+        let red = owo_colors::Style::new().red();
+        let blue = owo_colors::Style::new().blue();
+        let line = Line::<StyledText<Segment<&str, FlexKind>>>::from_segments([
+            StyledText::styled(Segment::from_raw_text_unchecked("red"), red),
+            StyledText::styled(Segment::from_raw_text_unchecked("blue"), blue),
+        ]);
+        eprintln!("{}", line.render());
     }
 }

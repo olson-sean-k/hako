@@ -59,6 +59,7 @@ pub struct ProjectedSlice<'a, T, F> {
     f: F,
 }
 
+// TODO: Support `SliceIndex` and re-projecting outputs when indexed over a range.
 impl<'a, T, U, F> Index<usize> for ProjectedSlice<'a, T, F>
 where
     U: 'a,

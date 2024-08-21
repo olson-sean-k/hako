@@ -1102,10 +1102,11 @@ mod tests {
         assert!(!block.is_empty());
     }
 
+    #[cfg(feature = "owo-colors")]
     #[test]
     fn block_styled_overlay() {
         #[derive(Clone, Copy, Debug, Default)]
-        struct Style(colored::Style);
+        struct Style(owo_colors::Style);
 
         impl Transform for Style {
             fn apply<'t>(&self, text: &'t str) -> Cow<'t, str> {
@@ -1116,18 +1117,18 @@ mod tests {
         type Content<'t> = Styled<Cow<'t, str>, Style>;
 
         let x = Block::<Content>::with_content(Content::new(
-            Style(colored::style().red().on_green()),
+            Style(owo_colors::style().red().on_green()),
             "rrrrrrrrrr",
         ));
         let y = Block::with_content(Content::new(
-            Style(colored::style().green().on_red().bold()),
+            Style(owo_colors::style().green().on_red().bold()),
             "gg gg\ngg gg",
         ));
         //let z = y.overlay(x);
         //let z = y.fill(Grapheme::from('g')).overlay(x);
         let z = y
             .fill(Content::new(
-                Style(colored::style().green().on_red().bold()),
+                Style(owo_colors::style().green().on_red().bold()),
                 "abcd\nba",
             ))
             .overlay(x);
