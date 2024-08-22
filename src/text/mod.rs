@@ -13,6 +13,7 @@ use std::slice::SliceIndex;
 
 use crate::breadth::Breadth;
 use crate::slice::{SliceExt as _, SliceProjection};
+use crate::text::style::{Style, Styler};
 use crate::{IntoWritten, MoveCow, Render};
 
 const CR: u8 = b'\r';
@@ -313,12 +314,12 @@ impl<'t> RawText for &'t str {
     const EMPTY: Self = "";
 }
 
-impl<'t> RawText for &'t String {
-    const EMPTY: Self = &String::new();
-}
-
 impl RawText for String {
     const EMPTY: Self = String::new();
+}
+
+impl<'t> RawText for &'t String {
+    const EMPTY: Self = &String::new();
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -425,6 +426,10 @@ impl<'t> TryFrom<String> for Grapheme<'t> {
     }
 }
 
+pub trait TryFromText<T>: Sized {
+    fn try_from_text(text: T) -> Result<Self, MorphologyError>;
+}
+
 pub trait BlockText:
     BlockTextProjection<RawText = <Self as BlockText>::RawText, BlockText = Self>
 {
@@ -521,13 +526,13 @@ pub struct BoundingBox<H> {
     pub height: H,
 }
 
-// NOTE: This is not mutually exclusive with `BlockLayout`. For example, `Line` is designed to be
-//       composed into a `Block` and implements `BlockLayout`, but it only ever consists of a
-//       single line of text. This makes it compatible with linear operations.
+// This is **not** mutually exclusive with `BlockLayout`. For example, `Line` is designed to be
+// composed into a `Block` and (indirectly) implements `BlockLayout` (via `as_block_layout`), but
+// it only ever consists of a single line of text. This makes it compatible with linear operations.
 //
-//       This is only true where inputs and outputs are the same; a morphism **may be** okay, but a
-//       transform is not. The layout traits both work this way: they only apply to closed
-//       operations. This should be in the trait documentation.
+// The layout traits only apply to **closed** operations that do not transform an input type into a
+// different output type (though morphisms that preserve the outermost structure are generally
+// okay). This should be in the trait documentation.
 pub trait LinearLayout: BlockText {
     fn width(&self) -> usize;
 }
@@ -535,12 +540,11 @@ pub trait LinearLayout: BlockText {
 pub trait BlockLayout: BlockText {
     type Height: Copy + Eq + Into<usize> + Ord;
 
-    // NOTE: It is important to keep these kinds of bounds distinct from `Unicode::width`,
-    //       `str::len`, etc.! These functions should **always** consider the complete text as a
-    //       sum. Here, ASCII line breaks are used to consider the structure of the text, and so
-    //       the width bound is a maximum by line. Imagine if `str::len` or some other `len`
-    //       function did this: it would be quite confusing. Do not conflate these concepts in
-    //       APIs.
+    // It is important to keep these kinds of bounds distinct from `Unicode::width`, `str::len`,
+    // etc.! These functions should **always** consider the complete text as a sum. Here, ASCII
+    // line breaks are used to consider the structure of the text, and so the width bound is a
+    // maximum by line. Imagine if `str::len` or some other `len` function did this: it would be
+    // quite confusing. Do not conflate these concepts in APIs.
     fn ascii_line_break_bounds(&self) -> BoundingBox<Self::Height>;
 }
 
@@ -825,10 +829,41 @@ where
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+// TODO: Prevent nested annotations.
+pub trait Annotate: Sized {
+    fn annotate<A>(self, annotation: A) -> Annotated<Self, A>;
+
+    fn inert<A>(self, annotation: A) -> Annotated<Self, Inert<A>>;
+
+    fn styled<S>(self, style: S) -> Annotated<Self, Styler<S>>
+    where
+        S: Style;
+}
+
+impl<T> Annotate for T {
+    fn annotate<A>(self, annotation: A) -> Annotated<Self, A> {
+        Annotated {
+            text: self,
+            annotation,
+        }
+    }
+
+    fn inert<A>(self, annotation: A) -> Annotated<Self, Inert<A>> {
+        self.annotate(Inert(annotation))
+    }
+
+    fn styled<S>(self, style: S) -> Annotated<Self, Styler<S>>
+    where
+        S: Style,
+    {
+        self.annotate(Styler::from(style))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct Inert<T>(pub T);
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct Annotated<T, A = ()> {
     pub text: T,
     pub annotation: A,
@@ -885,6 +920,35 @@ impl<T, A> Annotated<T, Inert<A>> {
     }
 }
 
+impl<T, A> From<T> for Annotated<T, A>
+where
+    A: Default,
+{
+    fn from(text: T) -> Self {
+        Annotated {
+            text,
+            annotation: A::default(),
+        }
+    }
+}
+
+impl<T, A> From<(T, A)> for Annotated<T, A> {
+    fn from((text, annotation): (T, A)) -> Self {
+        Annotated { text, annotation }
+    }
+}
+
+impl<T, U, A> TryFromText<Annotated<U, A>> for Annotated<T, A>
+where
+    T: TryFromText<U>,
+    U: RawText,
+{
+    fn try_from_text(annotated: Annotated<U, A>) -> Result<Self, MorphologyError> {
+        let Annotated { text, annotation } = annotated;
+        T::try_from_text(text).map(move |text| Annotated { text, annotation })
+    }
+}
+
 impl<T, A> BlockTextProjection for Annotated<T, A>
 where
     T: BlockText,
@@ -937,7 +1001,7 @@ pub type SegmentFor<T, M> = Segment<<T as BlockTextProjection>::RawText, M>;
 // TODO: The derived implementations do not depend on the type parameter `M`. Implement them
 //       explicitly to reflect this.
 #[derive(Debug, Eq, Hash, PartialEq)]
-pub struct Segment<T, M = FlexKind> {
+pub struct Segment<T = String, M = FlexKind> {
     text: T,
     _phantom: PhantomData<fn() -> M>,
 }
@@ -958,25 +1022,10 @@ where
 {
     pub fn try_from_raw_text<U>(text: U) -> Result<Self, MorphologyError>
     where
-        T: TryFrom<MoveCow<U>>,
+        T: RawText + TryFrom<MoveCow<U>>,
         U: RawText,
     {
-        let text: T = text
-            .strip_control_and_layout_points()
-            .try_into()
-            .map_err(|_| MorphologyError)?;
-        if text
-            .as_ref()
-            .graphemes()
-            .map(Indexed::into_text)
-            .map(MorphemeFor::<M>::try_from)
-            .all(|morpheme| morpheme.is_ok())
-        {
-            Ok(Segment::from_raw_text_unchecked(text))
-        }
-        else {
-            Err(MorphologyError)
-        }
+        Segment::try_from_text(text)
     }
 
     pub fn try_from_raw_text_or_joined<U>(text: U) -> Result<Self, MorphologyError>
@@ -987,12 +1036,27 @@ where
         let mut lines = text.as_ref().split_at_ascii_line_breaks().peekable();
         let first = lines.next();
         if lines.peek().is_some() {
-            Segment::try_from_raw_text(first.into_iter().chain(lines).join(""))
+            Segment::try_from_text(first.into_iter().chain(lines).join(""))
         }
         else {
             drop(lines);
-            Segment::try_from_raw_text(text)
+            Segment::try_from_text(text)
         }
+    }
+
+    pub fn try_from_raw_text_or_split<U>(text: U) -> Result<Vec<Self>, MorphologyError>
+    where
+        // TODO: This requires that split text is copied into a `String`, but may not if
+        //       `split_at_ascii_line_breaks` were implemented by `U` and returned `MoveCow`
+        //       instead.
+        T: TryFrom<MoveCow<String>>,
+        U: RawText,
+    {
+        text.as_ref()
+            .split_at_ascii_line_breaks()
+            .map(String::from)
+            .map(Segment::try_from_text)
+            .collect()
     }
 
     pub fn from_raw_text_or_empty<U>(text: U) -> Self
@@ -1000,7 +1064,7 @@ where
         T: TryFrom<MoveCow<U>>,
         U: RawText,
     {
-        match Segment::try_from_raw_text(text) {
+        match Segment::try_from_text(text) {
             Ok(text) => text,
             _ => Segment::empty(),
         }
@@ -1011,7 +1075,7 @@ where
         T: TryFrom<MoveCow<U>>,
         U: RawText,
     {
-        Segment::try_from_raw_text(text).expect("failed to construct block text")
+        Segment::try_from_text(text).expect("failed to construct block text")
     }
 
     pub const fn empty() -> Self {
@@ -1027,7 +1091,7 @@ where
         F: FnOnce(T) -> U,
     {
         let Segment { text, .. } = self;
-        Segment::try_from_raw_text(f(text))
+        Segment::try_from_text(f(text))
     }
 
     pub fn as_str(&self) -> &str {
@@ -1161,7 +1225,7 @@ where
             .graphemes()
             .skip_while(|grapheme| {
                 width = width
-                    .checked_add(grapheme.text.width().into())
+                    .checked_add(grapheme.text.width())
                     .expect("overflow truncating text");
                 width <= max
             })
@@ -1175,19 +1239,88 @@ where
     }
 }
 
+impl<'t, M> TryFrom<Cow<'t, str>> for Segment<Cow<'t, str>, M>
+where
+    M: MorphemeKind,
+{
+    type Error = MorphologyError;
+
+    fn try_from(text: Cow<'t, str>) -> Result<Self, Self::Error> {
+        Segment::try_from_text(text)
+    }
+}
+
+impl<'t, M> TryFrom<&'t str> for Segment<&'t str, M>
+where
+    M: MorphemeKind,
+{
+    type Error = MorphologyError;
+
+    fn try_from(text: &'t str) -> Result<Self, Self::Error> {
+        Segment::try_from_text(text)
+    }
+}
+
+impl<M> TryFrom<String> for Segment<String, M>
+where
+    M: MorphemeKind,
+{
+    type Error = MorphologyError;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        Segment::try_from_text(text)
+    }
+}
+
+impl<T, M> TryFromText<Segment<T, M>> for Segment<T, M> {
+    fn try_from_text(segment: Segment<T, M>) -> Result<Self, MorphologyError> {
+        Ok(segment)
+    }
+}
+
+impl<T, U, M> TryFromText<U> for Segment<T, M>
+where
+    T: RawText + TryFrom<MoveCow<U>>,
+    U: RawText,
+    M: MorphemeKind,
+{
+    fn try_from_text(text: U) -> Result<Self, MorphologyError> {
+        let text: T = text
+            .strip_control_and_layout_points()
+            .try_into()
+            .map_err(|_| MorphologyError)?;
+        if text
+            .as_ref()
+            .graphemes()
+            .map(Indexed::into_text)
+            .map(MorphemeFor::<M>::try_from)
+            .all(|morpheme| morpheme.is_ok())
+        {
+            Ok(Segment::from_raw_text_unchecked(text))
+        }
+        else {
+            Err(MorphologyError)
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct LineIndex {
     pub segment: usize,
     pub byte: usize,
 }
 
-// NOTE: Annotation type parameters (`A`) are captured by `T` here. That is, `Annotated` is
-//       abstracted such that `Line` has fewer type parameters and need not forward nor manage `A`.
-//       This will probably make it easier to support `Fill` types with "computed text".
+// TODO: Annotation type parameters are captured by `T` here. That is, `Annotated` is
+//       abstracted such that `Line` has fewer type parameters and need not forward nor be aware of
+//       annotation types. This will probably make it easier to support `Fill` types with "computed
+//       text". However, this prevents ergonomic type inference: take care to make this easy to
+//       use, at least in the common case (probably `String` text with `Flex` morphemes).
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct Line<T> {
+pub struct Line<T = Segment> {
     // TODO: Perhaps segments ought to be stored in a `VecDeque` instead? If prepending becomes
-    //       necessary in code written against `Line`, consider making this change.
+    //       necessary in code written against `Line`, consider making this change. The same idea
+    //       probably applies to `Block` too: `Line`s could be pushed onto the "top" or "bottom" of
+    //       a block.
     segments: Vec<T>,
 }
 
@@ -1204,17 +1337,66 @@ where
     T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>,
     M: MorphemeKind,
 {
-    pub fn from_segments<I>(segments: I) -> Self
+    pub fn try_from_raw_text<U>(text: U) -> Result<Self, MorphologyError>
     where
-        I: IntoIterator<Item = T>,
+        T: TryFromText<U>,
+        U: RawText,
     {
-        Line {
-            segments: segments.into_iter().collect(),
-        }
+        Line::try_from_text(text)
+    }
+
+    pub fn try_from_raw_text_or_joined<U>(text: U) -> Result<Self, MorphologyError>
+    where
+        T: From<Segment<T::RawText, M>>,
+        T::RawText: TryFrom<MoveCow<String>> + TryFrom<MoveCow<U>>,
+        U: RawText,
+    {
+        Segment::try_from_raw_text_or_joined(text).map(|segment| Line::from(vec![segment.into()]))
+    }
+
+    pub fn try_from_raw_text_or_split<U>(text: U) -> Result<Vec<Self>, MorphologyError>
+    where
+        T: TryFromText<String>,
+        U: RawText,
+    {
+        // This is not implemented via `Segment::try_from_raw_text_or_split` to avoid an additional
+        // allocation.
+        text.as_ref()
+            .split_at_ascii_line_breaks()
+            .map(String::from)
+            .map(Line::try_from_raw_text)
+            .collect()
+    }
+
+    pub fn try_from_segments<I>(segments: I) -> Result<Self, MorphologyError>
+    where
+        T: TryFromText<I::Item>,
+        I: IntoIterator,
+    {
+        segments
+            .into_iter()
+            .map(T::try_from_text)
+            .collect::<Result<Vec<_>, _>>()
+            .map(Line::from)
     }
 
     pub fn push(&mut self, segment: impl Into<T>) {
         self.segments.push(segment.into());
+    }
+
+    pub fn concatenate(self) -> Line<Segment<<T as BlockTextProjection>::RawText, M>>
+    where
+        Segment<<T as BlockTextProjection>::RawText, M>: ops::Append,
+    {
+        Line {
+            segments: self
+                .segments
+                .into_iter()
+                .map(BlockTextProjection::into_block_text)
+                .reduce(ops::Append::append)
+                .map(|concatenated| vec![concatenated])
+                .unwrap_or_else(Vec::new),
+        }
     }
 
     pub fn get(&self, index: usize) -> Option<&SegmentFor<T, M>> {
@@ -1266,6 +1448,10 @@ where
     }
 }
 
+// TODO: `into_owned` functions like these cannot detect and clone annotations. Abstract this
+//       further with an `IntoOwned` trait. Types like
+//       `Annotation<Segment<Cow<'_, str>, _>, Styler<&'_ Style>>` can implement this trait
+//       transitively over its fields, allowing both the text and style to clone.
 impl<'t, T, M> Line<T>
 where
     T: BlockTextProjection<BlockText = Segment<Cow<'t, str>, M>>,
@@ -1277,6 +1463,29 @@ where
             segments: segments
                 .into_iter()
                 .map(|segment| segment.map_block_text(Segment::into_owned))
+                .collect(),
+        }
+    }
+}
+
+impl<T, A> Line<Annotated<T, A>>
+where
+    T: ops::Append,
+    A: Eq,
+{
+    pub fn coalesce(self) -> Self {
+        Line {
+            segments: self
+                .segments
+                .into_iter()
+                .coalesce(|previous, next| {
+                    if previous.annotation == next.annotation {
+                        Ok(previous.map_text(move |text| ops::Append::append(text, next.text)))
+                    }
+                    else {
+                        Err((previous, next))
+                    }
+                })
                 .collect(),
         }
     }
@@ -1346,6 +1555,8 @@ where
     }
 }
 
+// TODO: It may be a good idea to `coalesce` styled lines to avoid unnecessary ANSI escape codes.
+//       This can't be done in the `Render` trait without a clone though.
 impl<T> Render for Line<T>
 where
     T: Render,
@@ -1368,6 +1579,24 @@ where
     }
 }
 
+impl<T> TryFromText<Line<T>> for Line<T> {
+    fn try_from_text(line: Line<T>) -> Result<Self, MorphologyError> {
+        Ok(line)
+    }
+}
+
+impl<T, M, U> TryFromText<U> for Line<T>
+where
+    T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>
+        + TryFromText<U>,
+    M: MorphemeKind,
+    U: RawText,
+{
+    fn try_from_text(text: U) -> Result<Self, MorphologyError> {
+        T::try_from_text(text).map(|segment| Line::from(vec![segment]))
+    }
+}
+
 fn ucs_ascii_is_cr_lf(byte: u8) -> bool {
     matches!(byte, CR | LF)
 }
@@ -1386,8 +1615,8 @@ fn uax44_point_is_cc_cf_zl_zp(point: char) -> bool {
 fn uax11_text_width_ambiguous_non_cjk(text: &str) -> usize {
     use unicode_width::UnicodeWidthStr;
 
-    // NOTE: This considers some potentially troublesome ASCII whitespace characters as zero-width,
-    //       which works well here! For example, TAB is zero-width and so is not a morpheme.
+    // This considers some potentially troublesome ASCII whitespace characters as zero-width, which
+    // works well here! For example, TAB is zero-width and so is **not** a morpheme.
     UnicodeWidthStr::width(text)
 }
 
@@ -1407,10 +1636,8 @@ fn uax29_text_grapheme_indices(
 
 #[cfg(test)]
 mod tests {
-    use crate::text::{Annotated, FlexKind, Line, Segment, StrExt as _};
+    use crate::text::{self, FlexKind, StrExt as _};
     use crate::Render;
-
-    type FlexSegment<T> = Segment<T, FlexKind>;
 
     #[test]
     fn split_at_ascii_line_breaks() {
@@ -1432,12 +1659,24 @@ mod tests {
     }
 
     #[test]
+    fn line_from_split_text() {
+        type Segment<T> = text::Segment<T, FlexKind>;
+        type Line<T> = text::Line<Segment<T>>;
+
+        let lines = Line::<String>::try_from_raw_text_or_split("text\ntext").unwrap();
+        assert_eq!(lines.len(), 2);
+        for line in lines {
+            assert_eq!(line.to_string(), "text");
+        }
+    }
+
+    #[test]
     fn render_block_text() {
-        let segment = FlexSegment::<&str>::try_from_raw_text("text").unwrap();
+        let segment = text::Segment::<&str>::try_from_raw_text("text").unwrap();
         assert_eq!(segment.render(), "text");
-        let annotated = Annotated::inert(segment, 0usize);
+        let annotated = text::Annotated::inert(segment, 0usize);
         assert_eq!(annotated.render(), "text");
-        let line = Line::from_segments([annotated.clone(), annotated]);
+        let line: text::Line<_> = [annotated.clone(), annotated].into_iter().collect();
         assert_eq!(line.render(), "texttext");
     }
 
@@ -1446,15 +1685,27 @@ mod tests {
     #[test]
     fn render_styled_block_text() {
         use crate::text::style;
+        use crate::text::Annotate;
 
-        type StyledText<T> = style::StyledText<T, owo_colors::Style>;
+        type Style<'s> = &'s owo_colors::Style;
+        type Segment<'t> = style::StyledText<text::Segment<&'t str>, Style<'t>>;
+        type Line<'t> = text::Line<Segment<'t>>;
 
         let red = owo_colors::Style::new().red();
+        let green = owo_colors::Style::new().green();
         let blue = owo_colors::Style::new().blue();
-        let line = Line::<StyledText<Segment<&str, FlexKind>>>::from_segments([
-            StyledText::styled(Segment::from_raw_text_unchecked("red"), red),
-            StyledText::styled(Segment::from_raw_text_unchecked("blue"), blue),
-        ]);
+        let bold = owo_colors::Style::new().bold();
+
+        // FIXME: The bold style is only applied to the first segment, but should be applied to the
+        //        entire line. See TODOs in the `style` module.
+        let line = Line::try_from_segments([
+            "red".styled(&red),
+            "green".styled(&green),
+            "blue".styled(&blue),
+        ])
+        .unwrap()
+        .styled(&bold);
+        //eprintln!("{:#?}", line);
         eprintln!("{}", line.render());
     }
 }

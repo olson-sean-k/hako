@@ -22,6 +22,44 @@ impl Style for () {
     }
 }
 
+impl<T> Style for Option<T>
+where
+    T: Style,
+{
+    fn encode<'t>(&self, text: &'t str) -> Cow<'t, str> {
+        match self {
+            Some(ref style) => style.encode(text),
+            _ => text.into(),
+        }
+    }
+}
+
+impl<'a, T> Style for &'a T
+where
+    T: Style,
+{
+    fn encode<'t>(&self, text: &'t str) -> Cow<'t, str> {
+        T::encode(*self, text)
+    }
+
+    fn encode_into(&self, text: &str, target: &mut impl Write) -> io::Result<()> {
+        T::encode_into(*self, text, target)
+    }
+}
+
+impl<'a, T> Style for &'a mut T
+where
+    T: Style,
+{
+    fn encode<'t>(&self, text: &'t str) -> Cow<'t, str> {
+        T::encode(*self, text)
+    }
+
+    fn encode_into(&self, text: &str, target: &mut impl Write) -> io::Result<()> {
+        T::encode_into(*self, text, target)
+    }
+}
+
 #[cfg(feature = "owo-colors")]
 #[cfg_attr(docsrs, doc(cfg(feature = "owo-colors")))]
 impl Style for owo_colors::Style {
@@ -30,7 +68,7 @@ impl Style for owo_colors::Style {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Styler<S>(S)
 where
     S: Style;
@@ -45,6 +83,15 @@ where
 
     pub fn encode_into(&self, text: &str, target: &mut impl Write) -> io::Result<()> {
         self.0.encode_into(text, target)
+    }
+}
+
+impl<S> From<S> for Styler<S>
+where
+    S: Style,
+{
+    fn from(style: S) -> Self {
+        Styler(style)
     }
 }
 
@@ -72,6 +119,13 @@ where
     S: Style,
 {
     fn render(&self) -> Cow<str> {
+        // TODO: ANSI style escape sequences cannot compose this way. For example, if the rendered
+        //       `text` here is a line with colored segments and the `annotation` is a bold style,
+        //       it will not be encoded properly and only some of the line will have the bold style
+        //       when rendered by a terminal.
+        //
+        //       This will likely require a structural change that supports composing style
+        //       elements.
         let text = self.text.render();
         self.annotation.encode(text.as_ref()).into_owned().into()
     }

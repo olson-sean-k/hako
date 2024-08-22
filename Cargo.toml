@@ -15,7 +15,10 @@ keywords = [
 ]
 
 [features]
-default = []
+default = [
+    # TODO: Remove this from default features.
+    "owo-colors",
+]
 owo-colors = ["dep:owo-colors"]
 
 [dependencies]
