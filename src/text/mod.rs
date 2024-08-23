@@ -1,3 +1,9 @@
+mod line;
+mod segment;
+
+pub mod annotation;
+pub mod layout;
+pub mod morphology;
 pub mod ops;
 pub mod style;
 
@@ -5,16 +11,14 @@ use itertools::Itertools;
 use std::borrow::Cow;
 use std::convert::Infallible;
 use std::fmt::Debug;
-use std::io::{self, Write};
-use std::marker::PhantomData;
-use std::num::NonZeroUsize;
 use std::ops::Range;
 use std::slice::SliceIndex;
 
-use crate::breadth::Breadth;
-use crate::slice::{SliceExt as _, SliceProjection};
-use crate::text::style::{Style, Styler};
-use crate::{IntoWritten, MoveCow, Render};
+use crate::cow::{IntoWritten, MoveCow};
+use crate::text::morphology::{Grapheme, Morpheme};
+
+pub use crate::text::line::{Line, LineIndex};
+pub use crate::text::segment::Segment;
 
 const CR: u8 = b'\r';
 const LF: u8 = b'\n';
@@ -87,7 +91,7 @@ impl StrExt for str {
     }
 
     fn has_control_or_layout_points(&self) -> bool {
-        self.chars().any(uax44_point_is_cc_cf_zl_zp)
+        self.chars().any(self::uax44_point_is_cc_cf_zl_zp)
     }
 
     // Splits over unpaired CR (unlike `str::lines`). Discards line breaking control characters.
@@ -136,12 +140,110 @@ impl StrExt for str {
     }
 
     fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<usize, Grapheme<'_>>> {
-        uax29_text_grapheme_indices(self)
+        self::uax29_text_grapheme_indices(self)
     }
 
     fn width(&self) -> usize {
-        uax11_text_width_ambiguous_non_cjk(self)
+        self::uax11_text_width_ambiguous_non_cjk(self)
     }
+}
+
+// Though this trait has the shape of an `AsMut` conversion, it may convert `self` prior to
+// returning its reference, so it uses "to" nomenclature rather than "as".
+trait ToStringMut {
+    fn to_string_mut(&mut self) -> &mut String;
+}
+
+impl<'t> ToStringMut for Cow<'t, str> {
+    fn to_string_mut(&mut self) -> &mut String {
+        self.to_mut()
+    }
+}
+
+impl ToStringMut for String {
+    fn to_string_mut(&mut self) -> &mut String {
+        self
+    }
+}
+
+pub trait Strip: IntoWritten + Sized {
+    // Like `str::replace`, but strictly removes and does not copy when the `Pattern` matches
+    // nothing.
+    // TODO: Implement this in terms of `std::str::Pattern` when it is stabilized.
+    fn strip<F>(self, pattern: F) -> MoveCow<Self>
+    where
+        F: FnMut(char) -> bool;
+
+    fn strip_control_and_layout_points(self) -> MoveCow<Self> {
+        self.strip(self::uax44_point_is_cc_cf_zl_zp)
+    }
+}
+
+impl<T> Strip for T
+where
+    T: AsRef<str> + IntoWritten,
+    T::Written: From<String>,
+{
+    // TODO: Oh man, test this.
+    fn strip<F>(self, pattern: F) -> MoveCow<Self>
+    where
+        F: FnMut(char) -> bool,
+    {
+        fn checkpoint(head: &mut usize, index: usize, matched: &str) -> Range<usize> {
+            let range = *head..index;
+            *head = index
+                .checked_add(matched.len())
+                .expect("overflow stripping text");
+            range
+        }
+
+        fn push(stripped: &mut String, haystack: &str, index: impl SliceIndex<str, Output = str>) {
+            stripped.push_str(haystack.get(index).expect("invalid UTF-8 slice"));
+        }
+
+        let haystack = self.as_ref();
+        let mut matches = haystack.match_indices(pattern);
+        let mut head = 0usize;
+        if let Some((index, matched)) = matches.next() {
+            let mut stripped = String::with_capacity(haystack.len());
+            let mut checkpoint_and_push = |index, matched| {
+                push(
+                    &mut stripped,
+                    haystack,
+                    checkpoint(&mut head, index, matched),
+                );
+            };
+            checkpoint_and_push(index, matched);
+            for (index, matched) in matches {
+                checkpoint_and_push(index, matched);
+            }
+            push(&mut stripped, haystack, head..);
+            MoveCow::Written(stripped.into())
+        }
+        else {
+            MoveCow::Unwritten(self)
+        }
+    }
+}
+
+pub trait RawText: AsRef<str> + IntoWritten + Strip {
+    const EMPTY: Self;
+}
+
+impl<'t> RawText for Cow<'t, str> {
+    const EMPTY: Self = Cow::Borrowed("");
+}
+
+impl<'t> RawText for &'t str {
+    const EMPTY: Self = "";
+}
+
+impl RawText for String {
+    const EMPTY: Self = String::new();
+}
+
+impl<'t> RawText for &'t String {
+    const EMPTY: Self = &String::new();
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -221,208 +323,6 @@ impl<T> Indexed<usize, T> {
 impl<N, T> From<(N, T)> for Indexed<N, T> {
     fn from((index, text): (N, T)) -> Self {
         Indexed { index, text }
-    }
-}
-
-// Though this trait has the shape of an `AsMut` conversion, it may convert `self` prior to
-// returning its reference, so it uses "to" nomenclature rather than "as".
-trait ToStringMut {
-    fn to_string_mut(&mut self) -> &mut String;
-}
-
-impl<'t> ToStringMut for Cow<'t, str> {
-    fn to_string_mut(&mut self) -> &mut String {
-        self.to_mut()
-    }
-}
-
-impl ToStringMut for String {
-    fn to_string_mut(&mut self) -> &mut String {
-        self
-    }
-}
-
-pub trait Strip: IntoWritten + Sized {
-    // Like `str::replace`, but strictly removes and does not copy when the `Pattern` matches
-    // nothing.
-    // TODO: Implement this in terms of `std::str::Pattern` when it is stabilized.
-    fn strip<F>(self, pattern: F) -> MoveCow<Self>
-    where
-        F: FnMut(char) -> bool;
-
-    fn strip_control_and_layout_points(self) -> MoveCow<Self> {
-        self.strip(uax44_point_is_cc_cf_zl_zp)
-    }
-}
-
-impl<T> Strip for T
-where
-    T: AsRef<str> + IntoWritten,
-    T::Written: From<String>,
-{
-    // TODO: Oh man, test this.
-    fn strip<F>(self, pattern: F) -> MoveCow<Self>
-    where
-        F: FnMut(char) -> bool,
-    {
-        fn checkpoint(head: &mut usize, index: usize, matched: &str) -> Range<usize> {
-            let range = *head..index;
-            *head = index
-                .checked_add(matched.len())
-                .expect("overflow stripping text");
-            range
-        }
-
-        fn push(stripped: &mut String, haystack: &str, index: impl SliceIndex<str, Output = str>) {
-            stripped.push_str(haystack.get(index).expect("invalid UTF-8 slice"));
-        }
-
-        let haystack = self.as_ref();
-        let mut matches = haystack.match_indices(pattern);
-        let mut head = 0usize;
-        if let Some((index, matched)) = matches.next() {
-            let mut stripped = String::with_capacity(haystack.len());
-            let mut checkpoint_and_push = |index, matched| {
-                push(
-                    &mut stripped,
-                    haystack,
-                    checkpoint(&mut head, index, matched),
-                );
-            };
-            checkpoint_and_push(index, matched);
-            for (index, matched) in matches {
-                checkpoint_and_push(index, matched);
-            }
-            push(&mut stripped, haystack, head..);
-            MoveCow::Written(stripped.into())
-        }
-        else {
-            MoveCow::Unwritten(self)
-        }
-    }
-}
-
-pub trait RawText: AsRef<str> + IntoWritten + Strip {
-    const EMPTY: Self;
-}
-
-impl<'t> RawText for Cow<'t, str> {
-    const EMPTY: Self = Cow::Borrowed("");
-}
-
-impl<'t> RawText for &'t str {
-    const EMPTY: Self = "";
-}
-
-impl RawText for String {
-    const EMPTY: Self = String::new();
-}
-
-impl<'t> RawText for &'t String {
-    const EMPTY: Self = &String::new();
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-#[repr(transparent)]
-pub struct Grapheme<'t> {
-    text: Cow<'t, str>,
-}
-
-impl<'t> Grapheme<'t> {
-    const fn from_string_unchecked(text: Cow<'t, str>) -> Self {
-        Grapheme { text }
-    }
-
-    pub fn from_point(point: char) -> Grapheme<'static> {
-        Grapheme::from(point)
-    }
-
-    pub fn into_owned(self) -> Grapheme<'static> {
-        let Grapheme { text } = self;
-        Grapheme {
-            text: text.into_owned().into(),
-        }
-    }
-
-    pub fn into_string(self) -> Cow<'t, str> {
-        self.text
-    }
-
-    pub fn points(&self) -> impl '_ + Iterator<Item = char> {
-        self.text.chars()
-    }
-
-    pub fn width(&self) -> usize {
-        self.text.as_ref().width()
-    }
-}
-
-impl<'t> AsRef<str> for Grapheme<'t> {
-    fn as_ref(&self) -> &str {
-        self.text.as_ref()
-    }
-}
-
-// No single Unicode code point encodes more than one grapheme.
-impl<'t> From<char> for Grapheme<'t> {
-    fn from(point: char) -> Self {
-        Grapheme::from_string_unchecked(point.to_string().into())
-    }
-}
-
-impl<'t> From<Flex<'t>> for Grapheme<'t> {
-    fn from(morpheme: Flex<'t>) -> Self {
-        match morpheme {
-            Flex::Narrow(narrow) => narrow.into(),
-            Flex::Wide(wide) => wide.into(),
-        }
-    }
-}
-
-impl<'t, N> From<Indexed<N, Grapheme<'t>>> for Grapheme<'t> {
-    fn from(indexed: Indexed<N, Grapheme<'t>>) -> Self {
-        indexed.into_text()
-    }
-}
-
-impl<'t> From<Narrow<'t>> for Grapheme<'t> {
-    fn from(narrow: Narrow<'t>) -> Self {
-        narrow.grapheme
-    }
-}
-
-impl<'t> From<Wide<'t>> for Grapheme<'t> {
-    fn from(wide: Wide<'t>) -> Self {
-        wide.grapheme
-    }
-}
-
-impl<'t> TryFrom<Cow<'t, str>> for Grapheme<'t> {
-    type Error = MorphologyError;
-
-    fn try_from(text: Cow<'t, str>) -> Result<Self, Self::Error> {
-        if text.as_ref().graphemes().take(2).count() == 1 {
-            Ok(Grapheme::from_string_unchecked(text))
-        }
-        else {
-            Err(MorphologyError)
-        }
-    }
-}
-
-impl<'t> TryFrom<&'t str> for Grapheme<'t> {
-    type Error = MorphologyError;
-
-    fn try_from(text: &'t str) -> Result<Self, Self::Error> {
-        Cow::from(text).try_into()
-    }
-}
-
-impl<'t> TryFrom<String> for Grapheme<'t> {
-    type Error = MorphologyError;
-
-    fn try_from(text: String) -> Result<Self, Self::Error> {
-        Cow::from(text).try_into()
     }
 }
 
@@ -518,1090 +418,11 @@ where
     }
 }
 
-// Count of columns and rows of some text. This is somewhat general, but generally considers line
-// breaks.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct BoundingBox<H> {
-    pub width: usize,
-    pub height: H,
-}
-
-// This is **not** mutually exclusive with `BlockLayout`. For example, `Line` is designed to be
-// composed into a `Block` and (indirectly) implements `BlockLayout` (via `as_block_layout`), but
-// it only ever consists of a single line of text. This makes it compatible with linear operations.
-//
-// The layout traits only apply to **closed** operations that do not transform an input type into a
-// different output type (though morphisms that preserve the outermost structure are generally
-// okay). This should be in the trait documentation.
-pub trait LinearLayout: BlockText {
-    fn width(&self) -> usize;
-}
-
-pub trait BlockLayout: BlockText {
-    type Height: Copy + Eq + Into<usize> + Ord;
-
-    // It is important to keep these kinds of bounds distinct from `Unicode::width`, `str::len`,
-    // etc.! These functions should **always** consider the complete text as a sum. Here, ASCII
-    // line breaks are used to consider the structure of the text, and so the width bound is a
-    // maximum by line. Imagine if `str::len` or some other `len` function did this: it would be
-    // quite confusing. Do not conflate these concepts in APIs.
-    fn ascii_line_break_bounds(&self) -> BoundingBox<Self::Height>;
-}
-
-pub trait MorphemeKind: 'static {
-    type Morpheme<'t>: Morpheme<'t>;
-}
-
-// TODO: Hmm, this is probably not useful.
-// TODO: Use the term "blank" instead of "space" for morphemes. That is, abstract the notion of
-//       non-display morphemes. "Space" is probably more appropriate for more general text types
-//       though. See other TODOs about the terms "empty" and "blank" (remove "zero").
-pub trait Blank: MorphemeKind {
-    const BLANK: MorphemeFor<'static, Self>;
-}
-
-#[derive(Debug)]
-pub enum FlexKind {}
-
-impl MorphemeKind for FlexKind {
-    type Morpheme<'t> = Flex<'t>;
-}
-
-#[derive(Debug)]
-pub enum NarrowKind {}
-
-impl MorphemeKind for NarrowKind {
-    type Morpheme<'t> = Narrow<'t>;
-}
-
-#[derive(Debug)]
-pub enum WideKind {}
-
-impl MorphemeKind for WideKind {
-    type Morpheme<'t> = Wide<'t>;
-}
-
-pub trait Morpheme<'t>: AsRef<str> + Into<Flex<'t>> + TryFrom<Grapheme<'t>> {
-    type Kind: MorphemeKind<Morpheme<'t> = Self>;
-
-    fn into_string(self) -> Cow<'t, str>;
-
-    fn width(&self) -> NonZeroUsize;
-}
-
-pub type MorphemeFor<'t, M> = <M as MorphemeKind>::Morpheme<'t>;
-
-pub type Flex<'t> = Breadth<Narrow<'t>, Wide<'t>>;
-
-impl<'t> Flex<'t> {
-    pub fn into_owned(self) -> Flex<'t> {
-        match self {
-            Flex::Narrow(narrow) => Flex::Narrow(narrow.into_owned()),
-            Flex::Wide(wide) => Flex::Wide(wide.into_owned()),
-        }
-    }
-
-    pub fn as_grapheme(&self) -> &Grapheme<'t> {
-        match self {
-            Flex::Narrow(ref narrow) => narrow.as_grapheme(),
-            Flex::Wide(ref wide) => wide.as_grapheme(),
-        }
-    }
-}
-
-impl AsRef<str> for Flex<'_> {
-    fn as_ref(&self) -> &str {
-        match self {
-            Flex::Narrow(ref narrow) => narrow.as_ref(),
-            Flex::Wide(ref wide) => wide.as_ref(),
-        }
-    }
-}
-
-impl<'t> From<Narrow<'t>> for Flex<'t> {
-    fn from(narrow: Narrow<'t>) -> Self {
-        Flex::Narrow(narrow)
-    }
-}
-
-impl<'t> From<Wide<'t>> for Flex<'t> {
-    fn from(wide: Wide<'t>) -> Self {
-        Flex::Wide(wide)
-    }
-}
-
-impl<'t> Morpheme<'t> for Flex<'t> {
-    type Kind = FlexKind;
-
-    fn into_string(self) -> Cow<'t, str> {
-        match self {
-            Flex::Narrow(narrow) => narrow.into_string(),
-            Flex::Wide(wide) => wide.into_string(),
-        }
-    }
-
-    fn width(&self) -> NonZeroUsize {
-        match self {
-            Flex::Narrow(_) => Narrow::WIDTH,
-            Flex::Wide(_) => Wide::WIDTH,
-        }
-    }
-}
-
-impl<'t> TryFrom<Grapheme<'t>> for Flex<'t> {
-    type Error = MorphologyError;
-
-    fn try_from(grapheme: Grapheme<'t>) -> Result<Self, Self::Error> {
-        match NonZeroUsize::new(grapheme.width()) {
-            Some(Narrow::WIDTH) => Ok(Narrow::from_grapheme_unchecked(grapheme).into()),
-            Some(Wide::WIDTH) => Ok(Wide::from_grapheme_unchecked(grapheme).into()),
-            _ => Err(MorphologyError),
-        }
-    }
-}
-
-// Narrow **or ambiguous one-column width**.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-#[repr(transparent)]
-pub struct Narrow<'t> {
-    grapheme: Grapheme<'t>,
-}
-
-impl<'t> Narrow<'t> {
-    pub const WIDTH: NonZeroUsize = NonZeroUsize::MIN;
-
-    const fn from_grapheme_unchecked(grapheme: Grapheme<'t>) -> Self {
-        Narrow { grapheme }
-    }
-
-    pub const fn space() -> Narrow<'static> {
-        Narrow::from_grapheme_unchecked(Grapheme::from_string_unchecked(Cow::Borrowed(" ")))
-    }
-
-    pub fn into_owned(self) -> Narrow<'static> {
-        let Narrow { grapheme } = self;
-        Narrow {
-            grapheme: grapheme.into_owned(),
-        }
-    }
-
-    pub fn as_grapheme(&self) -> &Grapheme<'t> {
-        &self.grapheme
-    }
-
-    pub fn is_ambiguous(&self) -> bool {
-        // This function is defined here to avoid its use elsewhere: text width is non-CJK when
-        // ambiguous.
-        fn uax11_text_width_ambiguous_cjk(text: &str) -> usize {
-            use unicode_width::UnicodeWidthStr;
-
-            UnicodeWidthStr::width_cjk(text)
-        }
-
-        let text = self.as_ref();
-        uax11_text_width_ambiguous_cjk(text) != uax11_text_width_ambiguous_non_cjk(text)
-    }
-}
-
-impl<'t> AsRef<str> for Narrow<'t> {
-    fn as_ref(&self) -> &str {
-        self.grapheme.as_ref()
-    }
-}
-
-impl<'t> Morpheme<'t> for Narrow<'t> {
-    type Kind = NarrowKind;
-
-    fn into_string(self) -> Cow<'t, str> {
-        self.grapheme.into_string()
-    }
-
-    fn width(&self) -> NonZeroUsize {
-        Self::WIDTH
-    }
-}
-
-impl<'t> TryFrom<Grapheme<'t>> for Narrow<'t> {
-    type Error = MorphologyError;
-
-    fn try_from(grapheme: Grapheme<'t>) -> Result<Self, Self::Error> {
-        if grapheme.width() == Narrow::WIDTH.get() {
-            Ok(Narrow::from_grapheme_unchecked(grapheme))
-        }
-        else {
-            Err(MorphologyError)
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-#[repr(transparent)]
-pub struct Wide<'t> {
-    grapheme: Grapheme<'t>,
-}
-
-impl<'t> Wide<'t> {
-    // SAFETY: The input `usize` is never zero (it is always the literal `2`).
-    pub const WIDTH: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(2) };
-
-    const fn from_grapheme_unchecked(grapheme: Grapheme<'t>) -> Self {
-        Wide { grapheme }
-    }
-
-    pub const fn space() -> Wide<'static> {
-        Wide::from_grapheme_unchecked(Grapheme::from_string_unchecked(Cow::Borrowed("　")))
-    }
-
-    pub fn into_owned(self) -> Wide<'static> {
-        let Wide { grapheme } = self;
-        Wide {
-            grapheme: grapheme.into_owned(),
-        }
-    }
-
-    pub fn as_grapheme(&self) -> &Grapheme<'t> {
-        &self.grapheme
-    }
-}
-
-impl<'t> AsRef<str> for Wide<'t> {
-    fn as_ref(&self) -> &str {
-        self.grapheme.as_ref()
-    }
-}
-
-impl<'t> Morpheme<'t> for Wide<'t> {
-    type Kind = WideKind;
-
-    fn into_string(self) -> Cow<'t, str> {
-        self.grapheme.into_string()
-    }
-
-    fn width(&self) -> NonZeroUsize {
-        Self::WIDTH
-    }
-}
-
-impl<'t> TryFrom<Grapheme<'t>> for Wide<'t> {
-    type Error = MorphologyError;
-
-    fn try_from(grapheme: Grapheme<'t>) -> Result<Self, Self::Error> {
-        if grapheme.width() == Wide::WIDTH.get() {
-            Ok(Wide::from_grapheme_unchecked(grapheme))
-        }
-        else {
-            Err(MorphologyError)
-        }
-    }
-}
-
-// This makes interpreting linear text types as blocks explicit.
-#[derive(Debug)]
-#[repr(transparent)]
-struct AsBlockLayout<'t, T>(&'t T);
-
-impl<'t, T> BlockLayout for AsBlockLayout<'t, T>
-where
-    T: LinearLayout,
-{
-    type Height = NonZeroUsize;
-
-    fn ascii_line_break_bounds(&self) -> BoundingBox<Self::Height> {
-        BoundingBox {
-            width: self.0.width(),
-            height: NonZeroUsize::MIN,
-        }
-    }
-}
-
-impl<'t, T> BlockText for AsBlockLayout<'t, T>
-where
-    T: BlockText,
-{
-    type RawText = <T as BlockText>::RawText;
-    type Morpheme<'m> = T::Morpheme<'m>
-    where
-        Self: 'm;
-    type Index = T::Index;
-
-    fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Self::Index, Grapheme<'_>>> {
-        self.0.graphemes()
-    }
-}
-
-// TODO: Prevent nested annotations.
-pub trait Annotate: Sized {
-    fn annotate<A>(self, annotation: A) -> Annotated<Self, A>;
-
-    fn inert<A>(self, annotation: A) -> Annotated<Self, Inert<A>>;
-
-    fn styled<S>(self, style: S) -> Annotated<Self, Styler<S>>
-    where
-        S: Style;
-}
-
-impl<T> Annotate for T {
-    fn annotate<A>(self, annotation: A) -> Annotated<Self, A> {
-        Annotated {
-            text: self,
-            annotation,
-        }
-    }
-
-    fn inert<A>(self, annotation: A) -> Annotated<Self, Inert<A>> {
-        self.annotate(Inert(annotation))
-    }
-
-    fn styled<S>(self, style: S) -> Annotated<Self, Styler<S>>
-    where
-        S: Style,
-    {
-        self.annotate(Styler::from(style))
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub struct Inert<T>(pub T);
-
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
-pub struct Annotated<T, A = ()> {
-    pub text: T,
-    pub annotation: A,
-}
-
-impl<T, A> Annotated<T, A> {
-    pub const fn annotate(text: T, annotation: A) -> Self {
-        Annotated { text, annotation }
-    }
-
-    pub fn from_text(text: T) -> Self
-    where
-        A: Default,
-    {
-        Annotated {
-            text,
-            annotation: Default::default(),
-        }
-    }
-
-    pub fn map_text<U, F>(self, f: F) -> Annotated<U, A>
-    where
-        F: FnOnce(T) -> U,
-    {
-        let Annotated { text, annotation } = self;
-        Annotated {
-            text: f(text),
-            annotation,
-        }
-    }
-
-    pub fn map_annotation<U, F>(self, f: F) -> Annotated<T, U>
-    where
-        F: FnOnce(A) -> U,
-    {
-        let Annotated { text, annotation } = self;
-        Annotated {
-            text,
-            annotation: f(annotation),
-        }
-    }
-}
-
-impl<T, A> Annotated<T, Inert<A>> {
-    pub const fn inert(text: T, annotation: A) -> Self {
-        Annotated {
-            text,
-            annotation: Inert(annotation),
-        }
-    }
-
-    pub fn annotation(&self) -> &A {
-        &self.annotation.0
-    }
-}
-
-impl<T, A> From<T> for Annotated<T, A>
-where
-    A: Default,
-{
-    fn from(text: T) -> Self {
-        Annotated {
-            text,
-            annotation: A::default(),
-        }
-    }
-}
-
-impl<T, A> From<(T, A)> for Annotated<T, A> {
-    fn from((text, annotation): (T, A)) -> Self {
-        Annotated { text, annotation }
-    }
-}
-
-impl<T, U, A> TryFromText<Annotated<U, A>> for Annotated<T, A>
-where
-    T: TryFromText<U>,
-    U: RawText,
-{
-    fn try_from_text(annotated: Annotated<U, A>) -> Result<Self, MorphologyError> {
-        let Annotated { text, annotation } = annotated;
-        T::try_from_text(text).map(move |text| Annotated { text, annotation })
-    }
-}
-
-impl<T, A> BlockTextProjection for Annotated<T, A>
-where
-    T: BlockText,
-{
-    type RawText = <T as BlockText>::RawText;
-    type BlockText = T;
-    type Mapped<U> = Annotated<U, A>
-    where
-        U: BlockText;
-
-    fn into_block_text(self) -> Self::BlockText {
-        self.text
-    }
-
-    fn map_block_text<U, F>(self, f: F) -> Self::Mapped<U>
-    where
-        U: BlockText,
-        F: FnOnce(Self::BlockText) -> U,
-    {
-        self.map_text(f)
-    }
-
-    fn as_block_text(&self) -> &Self::BlockText {
-        &self.text
-    }
-
-    fn as_block_text_mut(&mut self) -> &mut Self::BlockText {
-        &mut self.text
-    }
-}
-
-impl<T, A> Render for Annotated<T, Inert<A>>
-where
-    T: Render,
-{
-    fn render(&self) -> Cow<str> {
-        self.text.render()
-    }
-
-    fn render_into(&self, target: &mut impl Write) -> io::Result<()> {
-        self.text.render_into(target)
-    }
-}
-
-pub type SegmentFor<T, M> = Segment<<T as BlockTextProjection>::RawText, M>;
-
-// TODO: Segments ignore non-ASCII line breaks (by design). Make sure this is documented.
-// TODO: Consider `unicode-linebreak` or something similar if it seems that support for line
-//       breaking Unicode control characters like LS and PS is justified.
-// TODO: The derived implementations do not depend on the type parameter `M`. Implement them
-//       explicitly to reflect this.
-#[derive(Debug, Eq, Hash, PartialEq)]
-pub struct Segment<T = String, M = FlexKind> {
-    text: T,
-    _phantom: PhantomData<fn() -> M>,
-}
-
-impl<T, M> Segment<T, M> {
-    fn from_raw_text_unchecked(text: T) -> Self {
-        Segment {
-            text,
-            _phantom: PhantomData,
-        }
-    }
-}
-
-impl<T, M> Segment<T, M>
-where
-    T: RawText,
-    M: MorphemeKind,
-{
-    pub fn try_from_raw_text<U>(text: U) -> Result<Self, MorphologyError>
-    where
-        T: RawText + TryFrom<MoveCow<U>>,
-        U: RawText,
-    {
-        Segment::try_from_text(text)
-    }
-
-    pub fn try_from_raw_text_or_joined<U>(text: U) -> Result<Self, MorphologyError>
-    where
-        T: TryFrom<MoveCow<String>> + TryFrom<MoveCow<U>>,
-        U: RawText,
-    {
-        let mut lines = text.as_ref().split_at_ascii_line_breaks().peekable();
-        let first = lines.next();
-        if lines.peek().is_some() {
-            Segment::try_from_text(first.into_iter().chain(lines).join(""))
-        }
-        else {
-            drop(lines);
-            Segment::try_from_text(text)
-        }
-    }
-
-    pub fn try_from_raw_text_or_split<U>(text: U) -> Result<Vec<Self>, MorphologyError>
-    where
-        // TODO: This requires that split text is copied into a `String`, but may not if
-        //       `split_at_ascii_line_breaks` were implemented by `U` and returned `MoveCow`
-        //       instead.
-        T: TryFrom<MoveCow<String>>,
-        U: RawText,
-    {
-        text.as_ref()
-            .split_at_ascii_line_breaks()
-            .map(String::from)
-            .map(Segment::try_from_text)
-            .collect()
-    }
-
-    pub fn from_raw_text_or_empty<U>(text: U) -> Self
-    where
-        T: TryFrom<MoveCow<U>>,
-        U: RawText,
-    {
-        match Segment::try_from_text(text) {
-            Ok(text) => text,
-            _ => Segment::empty(),
-        }
-    }
-
-    pub fn assert<U>(text: U) -> Self
-    where
-        T: TryFrom<MoveCow<U>>,
-        U: RawText,
-    {
-        Segment::try_from_text(text).expect("failed to construct block text")
-    }
-
-    pub const fn empty() -> Self {
-        Segment {
-            text: T::EMPTY,
-            _phantom: PhantomData,
-        }
-    }
-
-    pub fn try_map_raw_text<U, F>(self, f: F) -> Result<Segment<U, M>, MorphologyError>
-    where
-        U: RawText + TryFrom<MoveCow<U>>,
-        F: FnOnce(T) -> U,
-    {
-        let Segment { text, .. } = self;
-        Segment::try_from_text(f(text))
-    }
-
-    pub fn as_str(&self) -> &str {
-        AsRef::<str>::as_ref(self)
-    }
-
-    // TODO: These bounds may be more specific than necessary: only the block bounds are needed
-    //       here!
-    // CLIPPY: This appears to be a false positive. An explicit lifetime is necessary for the GATs.
-    #[allow(clippy::needless_lifetimes)]
-    pub fn as_block_layout<'b>(
-        &'b self,
-    ) -> impl 'b + BlockLayout<Morpheme<'b> = MorphemeFor<'b, M>, Index = usize> {
-        AsBlockLayout(self)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.text.as_ref().is_empty()
-    }
-}
-
-impl<'t, M> Segment<Cow<'t, str>, M>
-where
-    M: MorphemeKind,
-{
-    pub fn into_owned(self) -> Segment<Cow<'static, str>, M> {
-        let Segment { text, .. } = self;
-        Segment::from_raw_text_unchecked(text.into_owned().into())
-    }
-}
-
-impl<T, M> ops::Append for Segment<T, M>
-where
-    T: RawText + ToStringMut,
-    M: MorphemeKind,
-{
-    fn append(mut self, rhs: Self) -> Self {
-        self.text.to_string_mut().push_str(rhs.as_str());
-        self
-    }
-}
-
-impl<T, M> AsRef<str> for Segment<T, M>
-where
-    T: AsRef<str>,
-{
-    fn as_ref(&self) -> &str {
-        self.text.as_ref()
-    }
-}
-
-impl<T, M> BlockText for Segment<T, M>
-where
-    T: RawText,
-    M: MorphemeKind,
-{
-    type RawText = T;
-    type Morpheme<'t> = MorphemeFor<'t, M>
-    where
-        Self: 't;
-    type Index = usize;
-
-    fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Self::Index, Grapheme<'_>>> {
-        self.text.as_ref().graphemes()
-    }
-}
-
-impl<T, M> Clone for Segment<T, M>
-where
-    T: Clone,
-{
-    fn clone(&self) -> Self {
-        Segment::from_raw_text_unchecked(self.text.clone())
-    }
-}
-
-impl<T, M> Copy for Segment<T, M> where T: Copy {}
-
-impl<T, M> ops::Extend for Segment<T, M>
-where
-    T: RawText + ToStringMut,
-    M: MorphemeKind,
-{
-    fn extend<'t, I>(&'t mut self, morphemes: I) -> usize
-    where
-        I: IntoIterator<Item = Self::Morpheme<'t>>,
-    {
-        self.text
-            .to_string_mut()
-            .extend(morphemes.into_iter().map(Morpheme::into_string));
-        self.width()
-    }
-}
-
-impl<T, M> LinearLayout for Segment<T, M>
-where
-    T: RawText,
-    M: MorphemeKind,
-{
-    fn width(&self) -> usize {
-        self.text.as_ref().width()
-    }
-}
-
-impl<T, M> Render for Segment<T, M>
-where
-    T: RawText,
-    M: MorphemeKind,
-{
-    fn render(&self) -> Cow<str> {
-        self.text.as_ref().into()
-    }
-
-    fn render_into(&self, target: &mut impl Write) -> io::Result<()> {
-        target.write_all(self.text.as_ref().as_bytes())
-    }
-}
-
-impl<T, M> ops::Truncate for Segment<T, M>
-where
-    T: RawText + ToStringMut,
-    M: MorphemeKind,
-{
-    fn truncate(&mut self, max: usize) -> usize {
-        let mut width = 0usize;
-        // This iterator expression cannot use `find`, because it borrows the iterator, which
-        // prevents the mutable borrow in the branch.
-        if let Some(len) = self
-            .text
-            .as_ref()
-            .graphemes()
-            .skip_while(|grapheme| {
-                width = width
-                    .checked_add(grapheme.text.width())
-                    .expect("overflow truncating text");
-                width <= max
-            })
-            .take(1)
-            .last()
-            .map(|grapheme| grapheme.index)
-        {
-            self.text.to_string_mut().truncate(len);
-        }
-        self.width()
-    }
-}
-
-impl<'t, M> TryFrom<Cow<'t, str>> for Segment<Cow<'t, str>, M>
-where
-    M: MorphemeKind,
-{
-    type Error = MorphologyError;
-
-    fn try_from(text: Cow<'t, str>) -> Result<Self, Self::Error> {
-        Segment::try_from_text(text)
-    }
-}
-
-impl<'t, M> TryFrom<&'t str> for Segment<&'t str, M>
-where
-    M: MorphemeKind,
-{
-    type Error = MorphologyError;
-
-    fn try_from(text: &'t str) -> Result<Self, Self::Error> {
-        Segment::try_from_text(text)
-    }
-}
-
-impl<M> TryFrom<String> for Segment<String, M>
-where
-    M: MorphemeKind,
-{
-    type Error = MorphologyError;
-
-    fn try_from(text: String) -> Result<Self, Self::Error> {
-        Segment::try_from_text(text)
-    }
-}
-
-impl<T, M> TryFromText<Segment<T, M>> for Segment<T, M> {
-    fn try_from_text(segment: Segment<T, M>) -> Result<Self, MorphologyError> {
-        Ok(segment)
-    }
-}
-
-impl<T, U, M> TryFromText<U> for Segment<T, M>
-where
-    T: RawText + TryFrom<MoveCow<U>>,
-    U: RawText,
-    M: MorphemeKind,
-{
-    fn try_from_text(text: U) -> Result<Self, MorphologyError> {
-        let text: T = text
-            .strip_control_and_layout_points()
-            .try_into()
-            .map_err(|_| MorphologyError)?;
-        if text
-            .as_ref()
-            .graphemes()
-            .map(Indexed::into_text)
-            .map(MorphemeFor::<M>::try_from)
-            .all(|morpheme| morpheme.is_ok())
-        {
-            Ok(Segment::from_raw_text_unchecked(text))
-        }
-        else {
-            Err(MorphologyError)
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct LineIndex {
-    pub segment: usize,
-    pub byte: usize,
-}
-
-// TODO: Annotation type parameters are captured by `T` here. That is, `Annotated` is
-//       abstracted such that `Line` has fewer type parameters and need not forward nor be aware of
-//       annotation types. This will probably make it easier to support `Fill` types with "computed
-//       text". However, this prevents ergonomic type inference: take care to make this easy to
-//       use, at least in the common case (probably `String` text with `Flex` morphemes).
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct Line<T = Segment> {
-    // TODO: Perhaps segments ought to be stored in a `VecDeque` instead? If prepending becomes
-    //       necessary in code written against `Line`, consider making this change. The same idea
-    //       probably applies to `Block` too: `Line`s could be pushed onto the "top" or "bottom" of
-    //       a block.
-    segments: Vec<T>,
-}
-
-impl<T> Line<T> {
-    pub const fn empty() -> Self {
-        Line {
-            segments: Vec::new(),
-        }
-    }
-}
-
-impl<T, M> Line<T>
-where
-    T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>,
-    M: MorphemeKind,
-{
-    pub fn try_from_raw_text<U>(text: U) -> Result<Self, MorphologyError>
-    where
-        T: TryFromText<U>,
-        U: RawText,
-    {
-        Line::try_from_text(text)
-    }
-
-    pub fn try_from_raw_text_or_joined<U>(text: U) -> Result<Self, MorphologyError>
-    where
-        T: From<Segment<T::RawText, M>>,
-        T::RawText: TryFrom<MoveCow<String>> + TryFrom<MoveCow<U>>,
-        U: RawText,
-    {
-        Segment::try_from_raw_text_or_joined(text).map(|segment| Line::from(vec![segment.into()]))
-    }
-
-    pub fn try_from_raw_text_or_split<U>(text: U) -> Result<Vec<Self>, MorphologyError>
-    where
-        T: TryFromText<String>,
-        U: RawText,
-    {
-        // This is not implemented via `Segment::try_from_raw_text_or_split` to avoid an additional
-        // allocation.
-        text.as_ref()
-            .split_at_ascii_line_breaks()
-            .map(String::from)
-            .map(Line::try_from_raw_text)
-            .collect()
-    }
-
-    pub fn try_from_segments<I>(segments: I) -> Result<Self, MorphologyError>
-    where
-        T: TryFromText<I::Item>,
-        I: IntoIterator,
-    {
-        segments
-            .into_iter()
-            .map(T::try_from_text)
-            .collect::<Result<Vec<_>, _>>()
-            .map(Line::from)
-    }
-
-    pub fn push(&mut self, segment: impl Into<T>) {
-        self.segments.push(segment.into());
-    }
-
-    pub fn concatenate(self) -> Line<Segment<<T as BlockTextProjection>::RawText, M>>
-    where
-        Segment<<T as BlockTextProjection>::RawText, M>: ops::Append,
-    {
-        Line {
-            segments: self
-                .segments
-                .into_iter()
-                .map(BlockTextProjection::into_block_text)
-                .reduce(ops::Append::append)
-                .map(|concatenated| vec![concatenated])
-                .unwrap_or_else(Vec::new),
-        }
-    }
-
-    pub fn get(&self, index: usize) -> Option<&SegmentFor<T, M>> {
-        self.segments
-            .get(index)
-            .map(BlockTextProjection::as_block_text)
-    }
-
-    pub fn segments<'s>(&'s self) -> impl 's + SliceProjection<Item = SegmentFor<T, M>>
-    where
-        M: 's,
-    {
-        self.segments
-            .as_slice()
-            .project(BlockTextProjection::as_block_text)
-    }
-
-    pub fn to_string<'s>(&'s self) -> Cow<'s, str>
-    where
-        M: 's,
-    {
-        let segments = self.segments();
-        match segments.len() {
-            0 => "".into(),
-            // TODO: Why can this not be done through the slice projection...? Fix this, if
-            //       possible.
-            //1 => segments.get(0).unwrap().as_str().into(),
-            1 => self.segments[0].as_block_text().as_ref().into(),
-            _ => segments.iter().map(Segment::as_str).join("").into(),
-        }
-    }
-
-    // TODO: These bounds may be more specific than necessary: only the block bounds are needed
-    //       here!
-    // CLIPPY: This appears to be a false positive. An explicit lifetime is necessary for the GATs.
-    #[allow(clippy::needless_lifetimes)]
-    pub fn as_block_layout<'b>(
-        &'b self,
-    ) -> impl 'b + BlockLayout<Morpheme<'b> = MorphemeFor<'b, M>, Index = LineIndex> {
-        AsBlockLayout(self)
-    }
-
-    pub fn has_segments(&self) -> bool {
-        !self.segments.is_empty()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.segments.is_empty() || self.segments().iter().all(|segment| segment.is_empty())
-    }
-}
-
-// TODO: `into_owned` functions like these cannot detect and clone annotations. Abstract this
-//       further with an `IntoOwned` trait. Types like
-//       `Annotation<Segment<Cow<'_, str>, _>, Styler<&'_ Style>>` can implement this trait
-//       transitively over its fields, allowing both the text and style to clone.
-impl<'t, T, M> Line<T>
-where
-    T: BlockTextProjection<BlockText = Segment<Cow<'t, str>, M>>,
-    M: MorphemeKind,
-{
-    pub fn into_owned(self) -> Line<T::Mapped<Segment<Cow<'static, str>, M>>> {
-        let Line { segments } = self;
-        Line {
-            segments: segments
-                .into_iter()
-                .map(|segment| segment.map_block_text(Segment::into_owned))
-                .collect(),
-        }
-    }
-}
-
-impl<T, A> Line<Annotated<T, A>>
-where
-    T: ops::Append,
-    A: Eq,
-{
-    pub fn coalesce(self) -> Self {
-        Line {
-            segments: self
-                .segments
-                .into_iter()
-                .coalesce(|previous, next| {
-                    if previous.annotation == next.annotation {
-                        Ok(previous.map_text(move |text| ops::Append::append(text, next.text)))
-                    }
-                    else {
-                        Err((previous, next))
-                    }
-                })
-                .collect(),
-        }
-    }
-}
-
-impl<T> Default for Line<T> {
-    fn default() -> Self {
-        Line {
-            segments: Default::default(),
-        }
-    }
-}
-
-impl<T, M> BlockText for Line<T>
-where
-    T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>,
-    M: MorphemeKind,
-{
-    type RawText = T::RawText;
-    type Morpheme<'t> = MorphemeFor<'t, M>
-    where
-        Self: 't;
-    type Index = LineIndex;
-
-    fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Self::Index, Grapheme<'_>>> {
-        self.segments
-            .iter()
-            .map(BlockTextProjection::as_block_text)
-            .enumerate()
-            .flat_map(|(index, segment)| {
-                segment.graphemes().map(move |grapheme| {
-                    grapheme.map_index(|byte| LineIndex {
-                        segment: index,
-                        byte,
-                    })
-                })
-            })
-    }
-}
-
-impl<T> From<Vec<T>> for Line<T> {
-    fn from(segments: Vec<T>) -> Self {
-        Line { segments }
-    }
-}
-
-impl<T> FromIterator<T> for Line<T> {
-    fn from_iter<I>(segments: I) -> Self
-    where
-        I: IntoIterator<Item = T>,
-    {
-        Line::from(segments.into_iter().collect::<Vec<_>>())
-    }
-}
-
-impl<T, M> LinearLayout for Line<T>
-where
-    T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>,
-    M: MorphemeKind,
-{
-    fn width(&self) -> usize {
-        self.segments
-            .iter()
-            .map(BlockTextProjection::as_block_text)
-            .map(LinearLayout::width)
-            .sum()
-    }
-}
-
-// TODO: It may be a good idea to `coalesce` styled lines to avoid unnecessary ANSI escape codes.
-//       This can't be done in the `Render` trait without a clone though.
-impl<T> Render for Line<T>
-where
-    T: Render,
-{
-    fn render(&self) -> Cow<str> {
-        self.segments
-            .iter()
-            .fold(String::new(), |mut rendered, segment| {
-                rendered.push_str(segment.render().as_ref());
-                rendered
-            })
-            .into()
-    }
-
-    fn render_into(&self, target: &mut impl Write) -> io::Result<()> {
-        for segment in self.segments.iter() {
-            target.write_all(segment.render().as_bytes())?;
-        }
-        Ok(())
-    }
-}
-
-impl<T> TryFromText<Line<T>> for Line<T> {
-    fn try_from_text(line: Line<T>) -> Result<Self, MorphologyError> {
-        Ok(line)
-    }
-}
-
-impl<T, M, U> TryFromText<U> for Line<T>
-where
-    T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>
-        + TryFromText<U>,
-    M: MorphemeKind,
-    U: RawText,
-{
-    fn try_from_text(text: U) -> Result<Self, MorphologyError> {
-        T::try_from_text(text).map(|segment| Line::from(vec![segment]))
-    }
-}
-
-fn ucs_ascii_is_cr_lf(byte: u8) -> bool {
+pub(self) fn ucs_ascii_is_cr_lf(byte: u8) -> bool {
     matches!(byte, CR | LF)
 }
 
-fn uax44_point_is_cc_cf_zl_zp(point: char) -> bool {
+pub(self) fn uax44_point_is_cc_cf_zl_zp(point: char) -> bool {
     use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
 
     use GeneralCategory::{Control, Format};
@@ -1612,7 +433,7 @@ fn uax44_point_is_cc_cf_zl_zp(point: char) -> bool {
 // Here, "ambiguous non-CJK" means that UAX11 ambiguous graphemes are assigned the "non-CJK" column
 // width of one (rather than two, which is typically more compatible in CJK contexts). Generally,
 // ambiguous and halfwidth graphemes are both mapped to narrow morphemes and are treated the same.
-fn uax11_text_width_ambiguous_non_cjk(text: &str) -> usize {
+pub(self) fn uax11_text_width_ambiguous_non_cjk(text: &str) -> usize {
     use unicode_width::UnicodeWidthStr;
 
     // This considers some potentially troublesome ASCII whitespace characters as zero-width, which
@@ -1620,7 +441,7 @@ fn uax11_text_width_ambiguous_non_cjk(text: &str) -> usize {
     UnicodeWidthStr::width(text)
 }
 
-fn uax29_text_grapheme_indices(
+pub(self) fn uax29_text_grapheme_indices(
     text: &str,
 ) -> impl '_ + Clone + Iterator<Item = Indexed<usize, Grapheme<'_>>> {
     use unicode_segmentation::UnicodeSegmentation;
@@ -1636,7 +457,9 @@ fn uax29_text_grapheme_indices(
 
 #[cfg(test)]
 mod tests {
-    use crate::text::{self, FlexKind, StrExt as _};
+    use crate::text::annotation::Annotated;
+    use crate::text::morphology::FlexKind;
+    use crate::text::{self, StrExt as _};
     use crate::Render;
 
     #[test]
@@ -1674,7 +497,7 @@ mod tests {
     fn render_block_text() {
         let segment = text::Segment::<&str>::try_from_raw_text("text").unwrap();
         assert_eq!(segment.render(), "text");
-        let annotated = text::Annotated::inert(segment, 0usize);
+        let annotated = Annotated::inert(segment, 0usize);
         assert_eq!(annotated.render(), "text");
         let line: text::Line<_> = [annotated.clone(), annotated].into_iter().collect();
         assert_eq!(line.render(), "texttext");
@@ -1684,8 +507,8 @@ mod tests {
     #[cfg(feature = "owo-colors")]
     #[test]
     fn render_styled_block_text() {
+        use crate::text::annotation::Annotate;
         use crate::text::style;
-        use crate::text::Annotate;
 
         type Style<'s> = &'s owo_colors::Style;
         type Segment<'t> = style::StyledText<text::Segment<&'t str>, Style<'t>>;

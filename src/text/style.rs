@@ -1,8 +1,9 @@
 use std::borrow::Cow;
 use std::io::{self, Write};
 
-use crate::text::Annotated;
-use crate::Render;
+use crate::text::annotation::Annotated;
+
+pub type StyledText<T, S> = Annotated<T, Styler<S>>;
 
 pub trait Style {
     fn encode<'t>(&self, text: &'t str) -> Cow<'t, str>;
@@ -77,6 +78,10 @@ impl<S> Styler<S>
 where
     S: Style,
 {
+    pub const fn new(style: S) -> Self {
+        Styler(style)
+    }
+
     pub fn encode<'t>(&self, text: &'t str) -> Cow<'t, str> {
         self.0.encode(text)
     }
@@ -86,52 +91,20 @@ where
     }
 }
 
+impl<S> AsRef<S> for Styler<S>
+where
+    S: Style,
+{
+    fn as_ref(&self) -> &S {
+        &self.0
+    }
+}
+
 impl<S> From<S> for Styler<S>
 where
     S: Style,
 {
     fn from(style: S) -> Self {
-        Styler(style)
-    }
-}
-
-pub type StyledText<T, S> = Annotated<T, Styler<S>>;
-
-impl<T, S> StyledText<T, S>
-where
-    S: Style,
-{
-    pub const fn styled(text: T, style: S) -> Self {
-        Annotated {
-            text,
-            annotation: Styler(style),
-        }
-    }
-
-    pub fn style(&self) -> &S {
-        &self.annotation.0
-    }
-}
-
-impl<T, S> Render for StyledText<T, S>
-where
-    T: Render,
-    S: Style,
-{
-    fn render(&self) -> Cow<str> {
-        // TODO: ANSI style escape sequences cannot compose this way. For example, if the rendered
-        //       `text` here is a line with colored segments and the `annotation` is a bold style,
-        //       it will not be encoded properly and only some of the line will have the bold style
-        //       when rendered by a terminal.
-        //
-        //       This will likely require a structural change that supports composing style
-        //       elements.
-        let text = self.text.render();
-        self.annotation.encode(text.as_ref()).into_owned().into()
-    }
-
-    fn render_into(&self, target: &mut impl Write) -> io::Result<()> {
-        self.annotation
-            .encode_into(self.text.render().as_ref(), target)
+        Styler::new(style)
     }
 }

@@ -1,6 +1,8 @@
 use std::convert::Infallible;
 
-use crate::text::{BlockLayout, BlockText, LinearLayout, Morpheme, Narrow, Wide};
+use crate::text::layout::{BlockLayout, LinearLayout};
+use crate::text::morphology::{Morpheme, Narrow, Wide};
+use crate::text::BlockText;
 
 pub use Layer::{Back, Front};
 
