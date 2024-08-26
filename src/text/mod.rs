@@ -2,7 +2,7 @@ mod line;
 mod segment;
 
 pub mod annotation;
-pub mod layout;
+pub mod geometry;
 pub mod morphology;
 pub mod ops;
 pub mod style;

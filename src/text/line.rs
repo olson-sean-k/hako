@@ -6,7 +6,7 @@ use std::io::{self, Write};
 use crate::cow::MoveCow;
 use crate::slice::{SliceExt as _, SliceProjection};
 use crate::text::annotation::Annotated;
-use crate::text::layout::{AsBlockLayout, BlockLayout, LinearLayout};
+use crate::text::geometry::{AsBlockGeometry, BlockGeometry, LinearGeometry};
 use crate::text::morphology::{Grapheme, MorphemeFor, MorphemeKind};
 use crate::text::segment::{Segment, SegmentFor};
 use crate::text::{
@@ -140,14 +140,12 @@ where
         }
     }
 
-    // TODO: These bounds may be more specific than necessary: only the block bounds are needed
-    //       here!
     // CLIPPY: This appears to be a false positive. An explicit lifetime is necessary for the GATs.
     #[allow(clippy::needless_lifetimes)]
-    pub fn as_block_layout<'b>(
+    pub fn as_block_geometry<'b>(
         &'b self,
-    ) -> impl 'b + BlockLayout<Morpheme<'b> = MorphemeFor<'b, M>, Index = LineIndex> {
-        AsBlockLayout(self)
+    ) -> impl 'b + BlockGeometry<Morpheme<'b> = MorphemeFor<'b, M>, Index = LineIndex> {
+        AsBlockGeometry(self)
     }
 
     pub fn has_segments(&self) -> bool {
@@ -252,7 +250,7 @@ impl<T> FromIterator<T> for Line<T> {
     }
 }
 
-impl<T, M> LinearLayout for Line<T>
+impl<T, M> LinearGeometry for Line<T>
 where
     T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>,
     M: MorphemeKind,
@@ -261,7 +259,7 @@ where
         self.segments
             .iter()
             .map(BlockTextProjection::as_block_text)
-            .map(LinearLayout::width)
+            .map(LinearGeometry::width)
             .sum()
     }
 }

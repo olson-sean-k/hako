@@ -5,7 +5,7 @@ use std::io::{self, Write};
 use std::marker::PhantomData;
 
 use crate::cow::MoveCow;
-use crate::text::layout::{AsBlockLayout, BlockLayout, LinearLayout};
+use crate::text::geometry::{AsBlockGeometry, BlockGeometry, LinearGeometry};
 use crate::text::morphology::{FlexKind, Grapheme, Morpheme, MorphemeFor, MorphemeKind};
 use crate::text::{
     ops, BlockText, BlockTextProjection, Indexed, MorphologyError, RawText, StrExt as _,
@@ -118,14 +118,12 @@ where
         AsRef::<str>::as_ref(self)
     }
 
-    // TODO: These bounds may be more specific than necessary: only the block bounds are needed
-    //       here!
     // CLIPPY: This appears to be a false positive. An explicit lifetime is necessary for the GATs.
     #[allow(clippy::needless_lifetimes)]
-    pub fn as_block_layout<'b>(
+    pub fn as_block_geometry<'b>(
         &'b self,
-    ) -> impl 'b + BlockLayout<Morpheme<'b> = MorphemeFor<'b, M>, Index = usize> {
-        AsBlockLayout(self)
+    ) -> impl 'b + BlockGeometry<Morpheme<'b> = MorphemeFor<'b, M>, Index = usize> {
+        AsBlockGeometry(self)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -206,7 +204,7 @@ where
     }
 }
 
-impl<T, M> LinearLayout for Segment<T, M>
+impl<T, M> LinearGeometry for Segment<T, M>
 where
     T: RawText,
     M: MorphemeKind,

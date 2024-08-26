@@ -12,18 +12,12 @@ pub struct BoundingBox<H> {
     pub height: H,
 }
 
-// This is **not** mutually exclusive with `BlockLayout`. For example, `Line` is designed to be
-// composed into a `Block` and (indirectly) implements `BlockLayout` (via `as_block_layout`), but
-// it only ever consists of a single line of text. This makes it compatible with linear operations.
-//
-// The layout traits only apply to **closed** operations that do not transform an input type into a
-// different output type (though morphisms that preserve the outermost structure are generally
-// okay). This should be in the trait documentation.
-pub trait LinearLayout: BlockText {
+// This is **not** mutually exclusive with `BlockLayout`.
+pub trait LinearGeometry: BlockText {
     fn width(&self) -> usize;
 }
 
-pub trait BlockLayout: BlockText {
+pub trait BlockGeometry: BlockText {
     type Height: Copy + Eq + Into<usize> + Ord;
 
     // It is important to keep these kinds of bounds distinct from `Unicode::width`, `str::len`,
@@ -37,11 +31,11 @@ pub trait BlockLayout: BlockText {
 // This makes interpreting linear text types as blocks explicit.
 #[derive(Debug)]
 #[repr(transparent)]
-pub(in crate::text) struct AsBlockLayout<'t, T>(pub &'t T);
+pub(in crate::text) struct AsBlockGeometry<'t, T>(pub &'t T);
 
-impl<'t, T> BlockLayout for AsBlockLayout<'t, T>
+impl<'t, T> BlockGeometry for AsBlockGeometry<'t, T>
 where
-    T: LinearLayout,
+    T: LinearGeometry,
 {
     type Height = NonZeroUsize;
 
@@ -53,7 +47,7 @@ where
     }
 }
 
-impl<'t, T> BlockText for AsBlockLayout<'t, T>
+impl<'t, T> BlockText for AsBlockGeometry<'t, T>
 where
     T: BlockText,
 {

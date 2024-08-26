@@ -1,6 +1,6 @@
 use std::convert::Infallible;
 
-use crate::text::layout::{BlockLayout, LinearLayout};
+use crate::text::geometry::{BlockGeometry, LinearGeometry};
 use crate::text::morphology::{Morpheme, Narrow, Wide};
 use crate::text::BlockText;
 
@@ -21,8 +21,8 @@ pub struct Congruent<L, R> {
 impl<L, R> Congruent<L, R> {
     pub fn try_from_blocks(left: L, right: R) -> Result<Self, (L, R)>
     where
-        L: BlockLayout,
-        R: BlockLayout<Height = L::Height>,
+        L: BlockGeometry,
+        R: BlockGeometry<Height = L::Height>,
     {
         if left.ascii_line_break_bounds() == right.ascii_line_break_bounds() {
             Ok(Congruent { left, right })
@@ -33,11 +33,11 @@ impl<L, R> Congruent<L, R> {
     }
 }
 
-pub trait Truncate: LinearLayout {
+pub trait Truncate: LinearGeometry {
     fn truncate(&mut self, max: usize) -> usize;
 }
 
-pub trait Extend: LinearLayout {
+pub trait Extend: LinearGeometry {
     fn extend<'t, I>(&'t mut self, morphemes: I) -> usize
     where
         I: IntoIterator<Item = Self::Morpheme<'t>>;
@@ -64,7 +64,7 @@ pub trait Extend: LinearLayout {
 //
 //       Also, unlike `Extend`, this trait may avoid copies, as `Extend` requires reading and
 //       copying morphemes from the RHS. `Append` may move or consolidate buffers.
-pub trait Append: LinearLayout {
+pub trait Append: LinearGeometry {
     fn append(self, rhs: Self) -> Self;
 }
 
