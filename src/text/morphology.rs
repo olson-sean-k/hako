@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::fmt::Debug;
 use std::num::NonZeroUsize;
 
-use crate::breadth::Breadth;
+use crate::text::modal::ModalWidth;
 use crate::text::{self, MorphologyError, StrExt as _};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -146,7 +146,7 @@ pub trait Morpheme<'t>: AsRef<str> + Into<Flex<'t>> + TryFrom<Grapheme<'t>> {
 
 pub type MorphemeFor<'t, M> = <M as MorphemeKind>::Morpheme<'t>;
 
-pub type Flex<'t> = Breadth<Narrow<'t>, Wide<'t>>;
+pub type Flex<'t> = ModalWidth<Narrow<'t>, Wide<'t>>;
 
 impl<'t> Flex<'t> {
     pub fn into_owned(self) -> Flex<'t> {

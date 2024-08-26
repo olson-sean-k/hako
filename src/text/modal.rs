@@ -1,18 +1,13 @@
-pub use Breadth::{Narrow, Wide};
-
-// NOTE: Remove this comment later. This general sum type is used, because this narrow vs. wide
-//       dichotomony is expected to show up in various internal APIs. The biggest examples are text
-//       representations (morphemes) as well as buffering and rendering (cells). Both of these must
-//       make this same distinction, but likely must associate different data with each variant.
+use ModalWidth::{Narrow, Wide};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum Breadth<N, W> {
+pub enum ModalWidth<N, W> {
     Narrow(N),
     Wide(W),
 }
 
-impl<N, W> Breadth<N, W> {
-    pub fn map_narrow<U, F>(self, f: F) -> Breadth<U, W>
+impl<N, W> ModalWidth<N, W> {
+    pub fn map_narrow<U, F>(self, f: F) -> ModalWidth<U, W>
     where
         F: FnOnce(N) -> U,
     {
@@ -22,7 +17,7 @@ impl<N, W> Breadth<N, W> {
         }
     }
 
-    pub fn map_wide<U, F>(self, f: F) -> Breadth<N, U>
+    pub fn map_wide<U, F>(self, f: F) -> ModalWidth<N, U>
     where
         F: FnOnce(W) -> U,
     {
@@ -46,7 +41,7 @@ impl<N, W> Breadth<N, W> {
         }
     }
 
-    pub fn as_ref(&self) -> Breadth<&N, &W> {
+    pub fn as_ref(&self) -> ModalWidth<&N, &W> {
         match self {
             Narrow(ref narrow) => Narrow(narrow),
             Wide(ref wide) => Wide(wide),
@@ -62,14 +57,14 @@ impl<N, W> Breadth<N, W> {
     }
 }
 
-impl<T> Breadth<T, T> {
+impl<T> ModalWidth<T, T> {
     pub fn into_inner(self) -> T {
         match self {
             Narrow(inner) | Wide(inner) => inner,
         }
     }
 
-    pub fn map<U, F>(self, f: F) -> Breadth<U, U>
+    pub fn map<U, F>(self, f: F) -> ModalWidth<U, U>
     where
         F: FnOnce(T) -> U,
     {

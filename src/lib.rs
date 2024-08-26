@@ -1,4 +1,3 @@
-mod breadth;
 mod slice;
 
 pub mod align;

@@ -1,4 +1,5 @@
 mod line;
+mod modal;
 mod segment;
 
 pub mod annotation;
