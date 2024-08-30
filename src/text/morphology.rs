@@ -5,6 +5,9 @@ use std::num::NonZeroUsize;
 use crate::text::modal::ModalWidth;
 use crate::text::{self, MorphologyError, StrExt as _};
 
+// SAFETY: The parameter `n` is not zero.
+const TWO: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(2) };
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 #[repr(transparent)]
 pub struct Grapheme<'t> {
@@ -105,14 +108,10 @@ impl<'t> TryFrom<String> for Grapheme<'t> {
 
 pub trait MorphemeKind: 'static {
     type Morpheme<'t>: Morpheme<'t>;
-}
 
-// TODO: Hmm, this is probably not useful.
-// TODO: Use the term "blank" instead of "space" for morphemes. That is, abstract the notion of
-//       non-display morphemes. "Space" is probably more appropriate for more general text types
-//       though. See other TODOs about the terms "empty" and "blank" (remove "zero").
-pub trait Blank: MorphemeKind {
-    const BLANK: MorphemeFor<'static, Self>;
+    const MIN_WIDTH: NonZeroUsize;
+
+    fn min_width_blank<'t>() -> MorphemeFor<'t, Self>;
 }
 
 #[derive(Debug)]
@@ -120,6 +119,13 @@ pub enum FlexKind {}
 
 impl MorphemeKind for FlexKind {
     type Morpheme<'t> = Flex<'t>;
+
+    const MIN_WIDTH: NonZeroUsize = Narrow::WIDTH;
+
+    #[inline(always)]
+    fn min_width_blank<'t>() -> MorphemeFor<'t, Self> {
+        Flex::Narrow(Narrow::blank())
+    }
 }
 
 #[derive(Debug)]
@@ -127,6 +133,13 @@ pub enum NarrowKind {}
 
 impl MorphemeKind for NarrowKind {
     type Morpheme<'t> = Narrow<'t>;
+
+    const MIN_WIDTH: NonZeroUsize = Narrow::WIDTH;
+
+    #[inline(always)]
+    fn min_width_blank<'t>() -> MorphemeFor<'t, Self> {
+        Narrow::blank()
+    }
 }
 
 #[derive(Debug)]
@@ -134,14 +147,25 @@ pub enum WideKind {}
 
 impl MorphemeKind for WideKind {
     type Morpheme<'t> = Wide<'t>;
+
+    const MIN_WIDTH: NonZeroUsize = Wide::WIDTH;
+
+    #[inline(always)]
+    fn min_width_blank<'t>() -> MorphemeFor<'t, Self> {
+        Wide::blank()
+    }
 }
 
-pub trait Morpheme<'t>: AsRef<str> + Into<Flex<'t>> + TryFrom<Grapheme<'t>> {
+pub trait Morpheme<'t>:
+    AsRef<str> + Clone + Into<Flex<'t>> + Into<Grapheme<'t>> + TryFrom<Grapheme<'t>>
+{
     type Kind: MorphemeKind<Morpheme<'t> = Self>;
 
     fn into_string(self) -> Cow<'t, str>;
 
     fn width(&self) -> NonZeroUsize;
+
+    fn is_blank(&self) -> bool;
 }
 
 pub type MorphemeFor<'t, M> = <M as MorphemeKind>::Morpheme<'t>;
@@ -201,6 +225,13 @@ impl<'t> Morpheme<'t> for Flex<'t> {
             Flex::Wide(_) => Wide::WIDTH,
         }
     }
+
+    fn is_blank(&self) -> bool {
+        match self {
+            Flex::Narrow(ref narrow) => narrow.is_blank(),
+            Flex::Wide(ref wide) => wide.is_blank(),
+        }
+    }
 }
 
 impl<'t> TryFrom<Grapheme<'t>> for Flex<'t> {
@@ -229,7 +260,7 @@ impl<'t> Narrow<'t> {
         Narrow { grapheme }
     }
 
-    pub const fn space() -> Narrow<'static> {
+    pub const fn blank() -> Narrow<'static> {
         Narrow::from_grapheme_unchecked(Grapheme::from_string_unchecked(Cow::Borrowed(" ")))
     }
 
@@ -274,6 +305,10 @@ impl<'t> Morpheme<'t> for Narrow<'t> {
     fn width(&self) -> NonZeroUsize {
         Self::WIDTH
     }
+
+    fn is_blank(&self) -> bool {
+        self == &Narrow::blank()
+    }
 }
 
 impl<'t> TryFrom<Grapheme<'t>> for Narrow<'t> {
@@ -296,14 +331,13 @@ pub struct Wide<'t> {
 }
 
 impl<'t> Wide<'t> {
-    // SAFETY: The input `usize` is never zero (it is always the literal `2`).
-    pub const WIDTH: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(2) };
+    pub const WIDTH: NonZeroUsize = TWO;
 
     const fn from_grapheme_unchecked(grapheme: Grapheme<'t>) -> Self {
         Wide { grapheme }
     }
 
-    pub const fn space() -> Wide<'static> {
+    pub const fn blank() -> Wide<'static> {
         Wide::from_grapheme_unchecked(Grapheme::from_string_unchecked(Cow::Borrowed("　")))
     }
 
@@ -334,6 +368,10 @@ impl<'t> Morpheme<'t> for Wide<'t> {
 
     fn width(&self) -> NonZeroUsize {
         Self::WIDTH
+    }
+
+    fn is_blank(&self) -> bool {
+        self == &Wide::blank()
     }
 }
 

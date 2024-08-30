@@ -22,6 +22,7 @@ default = [
 owo-colors = ["dep:owo-colors"]
 
 [dependencies]
+derive-where = "^1.2.0"
 itertools = "^0.10.0"
 unicode-properties = "^0.1.1"
 unicode-segmentation = "^1.8.0"
