@@ -528,12 +528,12 @@ mod tests {
         // FIXME: The bold style is only applied to the first segment, but should be applied to the
         //        entire line. See TODOs in the `style` module.
         let line = Line::try_from_segments([
-            "red".styled(&red),
-            "green".styled(&green),
-            "blue".styled(&blue),
+            "red".style(&red),
+            "green".style(&green),
+            "blue".style(&blue),
         ])
         .unwrap()
-        .styled(&bold);
+        .style(&bold);
         //eprintln!("{:#?}", line);
         eprintln!("{}", line.render());
     }

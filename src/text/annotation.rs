@@ -10,9 +10,9 @@ use crate::Render;
 pub trait Annotate: Sized {
     fn annotate<A>(self, annotation: A) -> Annotated<Self, A>;
 
-    fn inert<A>(self, annotation: A) -> Annotated<Self, Inert<A>>;
+    fn attach<A>(self, annotation: A) -> Annotated<Self, Attachment<A>>;
 
-    fn styled<S>(self, style: S) -> Annotated<Self, Styler<S>>
+    fn style<S>(self, style: S) -> Annotated<Self, Styler<S>>
     where
         S: Style;
 }
@@ -25,11 +25,11 @@ impl<T> Annotate for T {
         }
     }
 
-    fn inert<A>(self, annotation: A) -> Annotated<Self, Inert<A>> {
-        self.annotate(Inert(annotation))
+    fn attach<A>(self, annotation: A) -> Annotated<Self, Attachment<A>> {
+        self.annotate(Attachment(annotation))
     }
 
-    fn styled<S>(self, style: S) -> Annotated<Self, Styler<S>>
+    fn style<S>(self, style: S) -> Annotated<Self, Styler<S>>
     where
         S: Style,
     {
@@ -38,7 +38,7 @@ impl<T> Annotate for T {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub struct Inert<T>(pub T);
+pub struct Attachment<T>(pub T);
 
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct Annotated<T, A = ()> {
@@ -84,11 +84,11 @@ impl<T, A> Annotated<T, A> {
     }
 }
 
-impl<T, A> Annotated<T, Inert<A>> {
+impl<T, A> Annotated<T, Attachment<A>> {
     pub const fn inert(text: T, annotation: A) -> Self {
         Annotated {
             text,
-            annotation: Inert(annotation),
+            annotation: Attachment(annotation),
         }
     }
 
@@ -173,7 +173,7 @@ where
     }
 }
 
-impl<T, A> Render for Annotated<T, Inert<A>>
+impl<T, A> Render for Annotated<T, Attachment<A>>
 where
     T: Render,
 {
