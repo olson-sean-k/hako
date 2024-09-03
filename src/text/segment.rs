@@ -17,11 +17,10 @@ use crate::Render;
 
 use ModalText::{Blank, Content};
 
-// TODO: Define a `Segment` type rather than a `ContentSegment` type.
-pub type SegmentFor<T, M> = ContentSegment<<T as BlockTextProjection>::RawText, M>;
+pub type SegmentFor<T, M> = Segment<<T as BlockTextProjection>::RawText, M>;
 
 #[derive_where(Clone, Copy, Debug, Eq, Hash, PartialEq; T)]
-pub struct Segment<T, M> {
+pub struct Segment<T = String, M = FlexKind> {
     modal: ModalSegment<T, M>,
 }
 
@@ -32,13 +31,7 @@ where
 {
     pub fn to_string<'s>(&'s self) -> Cow<'s, str> {
         match self.modal {
-            // This may allocate an arbitrarily huge buffer for the string.
-            Blank(ref blank) => blank
-                .morphemes()
-                .map(Indexed::into_text)
-                .map(Morpheme::into_string)
-                .join("")
-                .into(),
+            Blank(ref blank) => blank.to_string().into(),
             Content(ref content) => content.as_ref().into(),
         }
     }
@@ -62,6 +55,33 @@ where
         match self.modal {
             Blank(ref blank) => blank.is_empty(),
             Content(ref content) => content.is_empty(),
+        }
+    }
+}
+
+impl<'t, M> Segment<Cow<'t, str>, M>
+where
+    M: MorphemeKind,
+{
+    pub fn into_owned(self) -> Segment<Cow<'static, str>, M> {
+        match self.modal {
+            Blank(blank) => blank.into_owned().into(),
+            Content(content) => content.into_owned().into(),
+        }
+    }
+}
+
+impl<T, M> ops::Append for Segment<T, M>
+where
+    T: From<String> + RawText + ToStringMut,
+    M: MorphemeKind,
+{
+    fn append(self, rhs: Self) -> Self {
+        match (self.modal, rhs.modal) {
+            (Blank(lhs), Blank(rhs)) => lhs.append(rhs).into(),
+            (Content(lhs), Content(rhs)) => lhs.append(rhs).into(),
+            (Blank(lhs), Content(rhs)) => ContentSegment::from(lhs).append(rhs).into(),
+            (Content(lhs), Blank(rhs)) => lhs.append(ContentSegment::from(rhs)).into(),
         }
     }
 }
@@ -123,6 +143,26 @@ where
     }
 }
 
+impl<T, M> Render for Segment<T, M>
+where
+    T: RawText,
+    M: MorphemeKind,
+{
+    fn render(&self) -> Cow<str> {
+        match self.modal {
+            Blank(ref blank) => blank.render(),
+            Content(ref content) => content.render(),
+        }
+    }
+
+    fn render_into(&self, target: &mut impl Write) -> io::Result<()> {
+        match self.modal {
+            Blank(ref blank) => blank.render_into(target),
+            Content(ref content) => content.render_into(target),
+        }
+    }
+}
+
 impl<T, M> TryFromText<Segment<T, M>> for Segment<T, M> {
     fn try_from_text(segment: Segment<T, M>) -> Result<Self, MorphologyError> {
         Ok(segment)
@@ -140,11 +180,11 @@ where
     }
 }
 
-pub type ModalSegment<T, M> = ModalText<BlankSegment<T, M>, ContentSegment<T, M>>;
+type ModalSegment<T, M> = ModalText<BlankSegment<T, M>, ContentSegment<T, M>>;
 
 #[derive_where(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[repr(transparent)]
-pub struct BlankSegment<T, M> {
+pub struct BlankSegment<T = String, M = FlexKind> {
     width: usize,
     _phantom: PhantomData<fn() -> (T, M)>,
 }
@@ -197,6 +237,42 @@ where
     }
 }
 
+impl<T, M> BlankSegment<T, M>
+where
+    T: RawText,
+    M: MorphemeKind,
+{
+    pub fn to_string(&self) -> String {
+        self.morphemes()
+            .map(Indexed::into_text)
+            .map(Morpheme::into_string)
+            .join("")
+    }
+}
+
+impl<'t, M> BlankSegment<Cow<'t, str>, M>
+where
+    M: MorphemeKind,
+{
+    pub fn into_owned(self) -> BlankSegment<Cow<'static, str>, M> {
+        BlankSegment::from_width_unchecked(self.width)
+    }
+}
+
+impl<T, M> ops::Append for BlankSegment<T, M>
+where
+    T: RawText,
+    M: MorphemeKind,
+{
+    fn append(self, rhs: Self) -> Self {
+        BlankSegment::from_width_unchecked(
+            self.width
+                .checked_add(rhs.width)
+                .expect("overflow appending text"),
+        )
+    }
+}
+
 impl<T, M> BlockText for BlankSegment<T, M>
 where
     T: RawText,
@@ -233,6 +309,20 @@ where
     }
 }
 
+impl<T, M> Render for BlankSegment<T, M>
+where
+    T: RawText,
+    M: MorphemeKind,
+{
+    fn render(&self) -> Cow<str> {
+        self.to_string().into()
+    }
+
+    fn render_into(&self, target: &mut impl Write) -> io::Result<()> {
+        target.write_all(self.to_string().as_bytes())
+    }
+}
+
 impl<T, M> ops::Truncate for BlankSegment<T, M>
 where
     T: RawText,
@@ -242,6 +332,12 @@ where
         let (segment, width) = BlankSegment::from_max_width(max);
         *self = segment;
         width
+    }
+}
+
+impl<T, M> TryFromText<BlankSegment<T, M>> for BlankSegment<T, M> {
+    fn try_from_text(segment: BlankSegment<T, M>) -> Result<Self, MorphologyError> {
+        Ok(segment)
     }
 }
 
@@ -426,6 +522,16 @@ where
             .to_string_mut()
             .extend(morphemes.into_iter().map(Morpheme::into_string));
         self.width()
+    }
+}
+
+impl<T, M> From<BlankSegment<T, M>> for ContentSegment<T, M>
+where
+    T: From<String> + RawText,
+    M: MorphemeKind,
+{
+    fn from(segment: BlankSegment<T, M>) -> Self {
+        ContentSegment::from_raw_text_unchecked(segment.to_string().into())
     }
 }
 

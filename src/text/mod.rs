@@ -19,7 +19,7 @@ use crate::cow::{IntoWritten, MoveCow};
 use crate::text::morphology::{Grapheme, Morpheme};
 
 pub use crate::text::line::{Line, LineIndex};
-pub use crate::text::segment::ContentSegment;
+pub use crate::text::segment::{BlankSegment, ContentSegment, Segment};
 
 const CR: u8 = b'\r';
 const LF: u8 = b'\n';
@@ -487,7 +487,7 @@ mod tests {
 
     #[test]
     fn line_from_split_text() {
-        type Segment<T> = text::ContentSegment<T, FlexKind>;
+        type Segment<T> = text::Segment<T, FlexKind>;
         type Line<T> = text::Line<Segment<T>>;
 
         let lines = Line::<String>::try_from_raw_text_or_split("text\ntext").unwrap();
@@ -499,7 +499,9 @@ mod tests {
 
     #[test]
     fn render_block_text() {
-        let segment = text::ContentSegment::<&str>::try_from_raw_text("text").unwrap();
+        let segment: text::Segment<_, _> = text::ContentSegment::<&str>::try_from_raw_text("text")
+            .unwrap()
+            .into();
         assert_eq!(segment.render(), "text");
         let annotated = Annotated::inert(segment, 0usize);
         assert_eq!(annotated.render(), "text");
@@ -515,7 +517,7 @@ mod tests {
         use crate::text::style;
 
         type Style<'s> = &'s owo_colors::Style;
-        type Segment<'t> = style::StyledText<text::ContentSegment<&'t str>, Style<'t>>;
+        type Segment<'t> = style::StyledText<text::Segment<&'t str>, Style<'t>>;
         type Line<'t> = text::Line<Segment<'t>>;
 
         let red = owo_colors::Style::new().red();

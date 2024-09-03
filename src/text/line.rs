@@ -8,14 +8,12 @@ use crate::slice::{SliceExt as _, SliceProjection};
 use crate::text::annotation::Annotated;
 use crate::text::geometry::{AsBlockGeometry, BlockGeometry, LinearGeometry};
 use crate::text::morphology::{Grapheme, MorphemeFor, MorphemeKind};
-use crate::text::segment::{ContentSegment, SegmentFor};
+use crate::text::segment::{BlankSegment, ContentSegment, Segment, SegmentFor};
 use crate::text::{
     ops, BlockText, BlockTextProjection, Indexed, MorphologyError, RawText, StrExt as _,
     TryFromText,
 };
 use crate::Render;
-
-// TODO: Construct `Line`s from `Segment`s rather than `ContentSegment`s.
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct LineIndex {
@@ -29,7 +27,7 @@ pub struct LineIndex {
 //       text". However, this prevents ergonomic type inference: take care to make this easy to
 //       use, at least in the common case (probably `String` text with `Flex` morphemes).
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct Line<T = ContentSegment> {
+pub struct Line<T = Segment> {
     // TODO: Perhaps segments ought to be stored in a `VecDeque` instead? If prepending becomes
     //       necessary in code written against `Line`, consider making this change. The same idea
     //       probably applies to `Block` too: `Line`s could be pushed onto the "top" or "bottom" of
@@ -47,7 +45,7 @@ impl<T> Line<T> {
 
 impl<T, M> Line<T>
 where
-    T: BlockTextProjection<BlockText = ContentSegment<<T as BlockTextProjection>::RawText, M>>,
+    T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>,
     M: MorphemeKind,
 {
     pub fn try_from_raw_text<U>(text: U) -> Result<Self, MorphologyError>
@@ -60,11 +58,12 @@ where
 
     pub fn try_from_raw_text_or_joined<U>(text: U) -> Result<Self, MorphologyError>
     where
-        T: From<ContentSegment<T::RawText, M>>,
+        T: From<Segment<T::RawText, M>>,
         T::RawText: TryFrom<MoveCow<String>> + TryFrom<MoveCow<U>>,
         U: RawText,
     {
         ContentSegment::try_from_raw_text_or_joined(text)
+            .map(Segment::from)
             .map(|segment| Line::from(vec![segment.into()]))
     }
 
@@ -80,6 +79,16 @@ where
             .map(String::from)
             .map(Line::try_from_raw_text)
             .collect()
+    }
+
+    pub fn try_from_width(width: usize) -> Result<Self, MorphologyError>
+    where
+        T: TryFromText<Segment<T::RawText, M>>,
+    {
+        BlankSegment::try_from_width(width)
+            .map(Segment::from)
+            .and_then(T::try_from_text)
+            .map(|segment| Line::from(vec![segment]))
     }
 
     pub fn try_from_segments<I>(segments: I) -> Result<Self, MorphologyError>
@@ -98,9 +107,9 @@ where
         self.segments.push(segment.into());
     }
 
-    pub fn concatenate(self) -> Line<ContentSegment<<T as BlockTextProjection>::RawText, M>>
+    pub fn concatenate(self) -> Line<Segment<<T as BlockTextProjection>::RawText, M>>
     where
-        ContentSegment<<T as BlockTextProjection>::RawText, M>: ops::Append,
+        Segment<<T as BlockTextProjection>::RawText, M>: ops::Append,
     {
         Line {
             segments: self
@@ -131,9 +140,9 @@ where
             0 => "".into(),
             // TODO: Why can this not be done through the slice projection...? Fix this, if
             //       possible.
-            //1 => segments.get(0).unwrap().as_str().into(),
-            1 => self.segments[0].as_block_text().as_ref().into(),
-            _ => segments.iter().map(ContentSegment::as_str).join("").into(),
+            //1 => segments.get(0).unwrap().to_string(),
+            1 => self.segments[0].as_block_text().to_string(),
+            _ => segments.iter().map(Segment::to_string).join("").into(),
         }
     }
 
@@ -160,15 +169,15 @@ where
 //       transitively over its fields, allowing both the text and style to clone.
 impl<'t, T, M> Line<T>
 where
-    T: BlockTextProjection<BlockText = ContentSegment<Cow<'t, str>, M>>,
+    T: BlockTextProjection<BlockText = Segment<Cow<'t, str>, M>>,
     M: MorphemeKind,
 {
-    pub fn into_owned(self) -> Line<T::Mapped<ContentSegment<Cow<'static, str>, M>>> {
+    pub fn into_owned(self) -> Line<T::Mapped<Segment<Cow<'static, str>, M>>> {
         let Line { segments } = self;
         Line {
             segments: segments
                 .into_iter()
-                .map(|segment| segment.map_block_text(ContentSegment::into_owned))
+                .map(|segment| segment.map_block_text(Segment::into_owned))
                 .collect(),
         }
     }
@@ -207,7 +216,7 @@ impl<T> Default for Line<T> {
 
 impl<T, M> BlockText for Line<T>
 where
-    T: BlockTextProjection<BlockText = ContentSegment<<T as BlockTextProjection>::RawText, M>>,
+    T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>,
     M: MorphemeKind,
 {
     type RawText = T::RawText;
@@ -249,7 +258,7 @@ impl<T> FromIterator<T> for Line<T> {
 
 impl<T, M> LinearGeometry for Line<T>
 where
-    T: BlockTextProjection<BlockText = ContentSegment<<T as BlockTextProjection>::RawText, M>>,
+    T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>,
     M: MorphemeKind,
 {
     fn width(&self) -> usize {
@@ -293,7 +302,7 @@ impl<T> TryFromText<Line<T>> for Line<T> {
 
 impl<T, M, U> TryFromText<U> for Line<T>
 where
-    T: BlockTextProjection<BlockText = ContentSegment<<T as BlockTextProjection>::RawText, M>>
+    T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>
         + TryFromText<U>,
     M: MorphemeKind,
     U: RawText,
