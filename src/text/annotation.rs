@@ -1,10 +1,8 @@
-use std::borrow::Cow;
-use std::fmt::Debug;
-use std::io::{self, Write};
+use std::fmt::{self, Debug, Display, Formatter};
 
-use crate::text::style::{Style, Styler};
+use crate::text::render::{AsDisplay, Render, RenderContext, RenderNode};
+use crate::text::style::{AnsiPrefix, Style};
 use crate::text::{BlockText, BlockTextProjection, MorphologyError, RawText, TryFromText};
-use crate::Render;
 
 // TODO: Prevent nested annotations.
 pub trait Annotate: Sized {
@@ -12,9 +10,9 @@ pub trait Annotate: Sized {
 
     fn attach<A>(self, annotation: A) -> Annotated<Self, Attachment<A>>;
 
-    fn style<S>(self, style: S) -> Annotated<Self, Styler<S>>
+    fn style<S>(self, style: S) -> Annotated<Self, Style<S>>
     where
-        S: Style;
+        S: AnsiPrefix;
 }
 
 impl<T> Annotate for T {
@@ -29,11 +27,11 @@ impl<T> Annotate for T {
         self.annotate(Attachment(annotation))
     }
 
-    fn style<S>(self, style: S) -> Annotated<Self, Styler<S>>
+    fn style<S>(self, style: S) -> Annotated<Self, Style<S>>
     where
-        S: Style,
+        S: AnsiPrefix,
     {
-        self.annotate(Styler::from(style))
+        self.annotate(Style::from(style))
     }
 }
 
@@ -95,21 +93,35 @@ impl<T, A> Annotated<T, Attachment<A>> {
     pub fn annotation(&self) -> &A {
         &self.annotation.0
     }
+
+    pub fn display(&self) -> impl '_ + Display
+    where
+        Self: Render<()>,
+    {
+        AsDisplay::from(self)
+    }
 }
 
-impl<T, S> Annotated<T, Styler<S>>
+impl<T, S> Annotated<T, Style<S>>
 where
-    S: Style,
+    S: AnsiPrefix,
 {
     pub const fn styled(text: T, style: S) -> Self {
         Annotated {
             text,
-            annotation: Styler::new(style),
+            annotation: Style::new(style),
         }
     }
 
     pub fn style(&self) -> &S {
         self.annotation.as_ref()
+    }
+
+    pub fn display(&self) -> impl '_ + Display
+    where
+        Self: Render<S>,
+    {
+        AsDisplay::from(self)
     }
 }
 
@@ -148,7 +160,8 @@ where
 {
     type RawText = <T as BlockText>::RawText;
     type BlockText = T;
-    type Mapped<U> = Annotated<U, A>
+    type Mapped<U>
+        = Annotated<U, A>
     where
         U: BlockText;
 
@@ -173,38 +186,33 @@ where
     }
 }
 
-impl<T, A> Render for Annotated<T, Attachment<A>>
+impl<T, A, S> Render<S> for Annotated<T, Attachment<A>>
 where
-    T: Render,
+    T: Render<S>,
 {
-    fn render(&self) -> Cow<str> {
-        self.text.render()
-    }
-
-    fn render_into(&self, target: &mut impl Write) -> io::Result<()> {
-        self.text.render_into(target)
+    fn fmt(&self, formatter: &mut Formatter, context: &mut RenderContext<S>) -> fmt::Result {
+        self.text.fmt(formatter, context)
     }
 }
 
-impl<T, S> Render for Annotated<T, Styler<S>>
+// Styled text pushes a render node with its style. Once a segment (leaf node) is reached in the
+// render call tree, the stack of styles is applied in order. This guarantees that ANSI escape
+// sequences are applied completely to each segment. These escape sequences act much like commands
+// and do compose well. Render nodes provide a basic composition mechanism that favors the most
+// local styles (i.e., segment styles are applied after line styles).
+impl<T, S> Render<S> for Annotated<T, Style<S>>
 where
-    T: Render,
-    S: Style,
+    T: Render<S>,
+    S: Clone,
 {
-    fn render(&self) -> Cow<str> {
-        // TODO: ANSI style escape sequences cannot compose this way. For example, if the rendered
-        //       `text` here is a line with colored segments and the `annotation` is a bold style,
-        //       it will not be encoded properly and only some of the line will have the bold style
-        //       when rendered by a terminal.
-        //
-        //       This will likely require a structural change that supports composing style
-        //       elements.
-        let text = self.text.render();
-        self.annotation.encode(text.as_ref()).into_owned().into()
-    }
-
-    fn render_into(&self, target: &mut impl Write) -> io::Result<()> {
-        self.annotation
-            .encode_into(self.text.render().as_ref(), target)
+    fn fmt(&self, formatter: &mut Formatter, context: &mut RenderContext<S>) -> fmt::Result {
+        context.push_node_and_fmt(formatter, || {
+            (
+                &self.text,
+                RenderNode {
+                    style: self.annotation.clone(),
+                },
+            )
+        })
     }
 }

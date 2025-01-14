@@ -52,7 +52,8 @@ where
     T: BlockText,
 {
     type RawText = <T as BlockText>::RawText;
-    type Morpheme<'m> = T::Morpheme<'m>
+    type Morpheme<'m>
+        = T::Morpheme<'m>
     where
         Self: 'm;
     type Index = T::Index;

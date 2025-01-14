@@ -1,110 +1,96 @@
-use std::borrow::Cow;
-use std::io::{self, Write};
+use std::fmt::{self, Display, Formatter};
 
 use crate::text::annotation::Annotated;
 
-pub type StyledText<T, S> = Annotated<T, Styler<S>>;
+const ANSI_RESET_ESCAPE_SEQUENCE: &str = "\u{1b}[0m";
 
-pub trait Style {
-    fn encode<'t>(&self, text: &'t str) -> Cow<'t, str>;
+pub type StyledText<T, S> = Annotated<T, Style<S>>;
 
-    fn encode_into(&self, text: &str, target: &mut impl Write) -> io::Result<()> {
-        target.write_all(self.encode(text).as_bytes())
-    }
+pub trait AnsiPrefix {
+    fn fmt(&self, formatter: &mut Formatter) -> fmt::Result;
 }
 
-impl Style for () {
-    fn encode<'t>(&self, text: &'t str) -> Cow<'t, str> {
-        text.into()
-    }
-
-    fn encode_into(&self, _: &str, _: &mut impl Write) -> io::Result<()> {
+impl AnsiPrefix for () {
+    #[inline(always)]
+    fn fmt(&self, _: &mut Formatter) -> fmt::Result {
         Ok(())
     }
 }
 
-impl<T> Style for Option<T>
+impl<S> AnsiPrefix for Option<S>
 where
-    T: Style,
+    S: AnsiPrefix,
 {
-    fn encode<'t>(&self, text: &'t str) -> Cow<'t, str> {
+    fn fmt(&self, formatter: &mut Formatter) -> fmt::Result {
         match self {
-            Some(ref style) => style.encode(text),
-            _ => text.into(),
+            Some(ref fence) => fence.fmt(formatter),
+            _ => Ok(()),
         }
     }
 }
 
-impl<'a, T> Style for &'a T
+impl<'a, T> AnsiPrefix for &'a T
 where
-    T: Style,
+    T: AnsiPrefix,
 {
-    fn encode<'t>(&self, text: &'t str) -> Cow<'t, str> {
-        T::encode(*self, text)
-    }
-
-    fn encode_into(&self, text: &str, target: &mut impl Write) -> io::Result<()> {
-        T::encode_into(*self, text, target)
+    fn fmt(&self, formatter: &mut Formatter) -> fmt::Result {
+        T::fmt(*self, formatter)
     }
 }
 
-impl<'a, T> Style for &'a mut T
+impl<'a, T> AnsiPrefix for &'a mut T
 where
-    T: Style,
+    T: AnsiPrefix,
 {
-    fn encode<'t>(&self, text: &'t str) -> Cow<'t, str> {
-        T::encode(*self, text)
-    }
-
-    fn encode_into(&self, text: &str, target: &mut impl Write) -> io::Result<()> {
-        T::encode_into(*self, text, target)
+    fn fmt(&self, formatter: &mut Formatter) -> fmt::Result {
+        T::fmt(*self, formatter)
     }
 }
 
 #[cfg(feature = "owo-colors")]
 #[cfg_attr(docsrs, doc(cfg(feature = "owo-colors")))]
-impl Style for owo_colors::Style {
-    fn encode<'t>(&self, text: &'t str) -> Cow<'t, str> {
-        self.style(text).to_string().into()
+impl AnsiPrefix for owo_colors::Style {
+    fn fmt(&self, formatter: &mut Formatter) -> fmt::Result {
+        owo_colors::Style::fmt_prefix(self, formatter)
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct AnsiSuffix;
+
+impl Display for AnsiSuffix {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}", ANSI_RESET_ESCAPE_SEQUENCE)
     }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct Styler<S>(S)
-where
-    S: Style;
+#[repr(transparent)]
+pub struct Style<S>(S);
 
-impl<S> Styler<S>
+impl<S> Style<S>
 where
-    S: Style,
+    S: AnsiPrefix,
 {
-    pub const fn new(style: S) -> Self {
-        Styler(style)
-    }
-
-    pub fn encode<'t>(&self, text: &'t str) -> Cow<'t, str> {
-        self.0.encode(text)
-    }
-
-    pub fn encode_into(&self, text: &str, target: &mut impl Write) -> io::Result<()> {
-        self.0.encode_into(text, target)
+    pub const fn new(fence: S) -> Self {
+        Style(fence)
     }
 }
 
-impl<S> AsRef<S> for Styler<S>
+impl<S> AsRef<S> for Style<S>
 where
-    S: Style,
+    S: AnsiPrefix,
 {
     fn as_ref(&self) -> &S {
         &self.0
     }
 }
 
-impl<S> From<S> for Styler<S>
+impl<S> From<S> for Style<S>
 where
-    S: Style,
+    S: AnsiPrefix,
 {
     fn from(style: S) -> Self {
-        Styler::new(style)
+        Style::new(style)
     }
 }

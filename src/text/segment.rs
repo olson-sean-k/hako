@@ -1,7 +1,7 @@
 use derive_where::derive_where;
 use itertools::Itertools;
 use std::borrow::Cow;
-use std::io::{self, Write};
+use std::fmt::{self, Display, Formatter};
 use std::iter;
 use std::marker::PhantomData;
 
@@ -9,11 +9,12 @@ use crate::cow::MoveCow;
 use crate::text::geometry::{AsBlockGeometry, BlockGeometry, LinearGeometry};
 use crate::text::modal::ModalText;
 use crate::text::morphology::{FlexKind, Grapheme, Morpheme, MorphemeFor, MorphemeKind};
+use crate::text::render::{AsDisplay, Render, RenderContext};
+use crate::text::style::AnsiPrefix;
 use crate::text::{
     ops, BlockText, BlockTextProjection, Indexed, MorphologyError, RawText, StrExt as _,
     ToStringMut, TryFromText,
 };
-use crate::Render;
 
 use ModalText::{Blank, Content};
 
@@ -34,6 +35,10 @@ where
             Blank(ref blank) => blank.to_string().into(),
             Content(ref content) => content.as_ref().into(),
         }
+    }
+
+    pub fn display(&self) -> impl '_ + Display {
+        AsDisplay::<_, ()>::from(self)
     }
 
     // CLIPPY: This appears to be a false positive. An explicit lifetime is necessary for the GATs.
@@ -92,7 +97,8 @@ where
     M: MorphemeKind,
 {
     type RawText = T;
-    type Morpheme<'t> = MorphemeFor<'t, M>
+    type Morpheme<'t>
+        = MorphemeFor<'t, M>
     where
         Self: 't;
     type Index = usize;
@@ -143,22 +149,16 @@ where
     }
 }
 
-impl<T, M> Render for Segment<T, M>
+impl<T, M, S> Render<S> for Segment<T, M>
 where
     T: RawText,
     M: MorphemeKind,
+    S: AnsiPrefix,
 {
-    fn render(&self) -> Cow<str> {
+    fn fmt(&self, formatter: &mut Formatter, context: &mut RenderContext<S>) -> fmt::Result {
         match self.modal {
-            Blank(ref blank) => blank.render(),
-            Content(ref content) => content.render(),
-        }
-    }
-
-    fn render_into(&self, target: &mut impl Write) -> io::Result<()> {
-        match self.modal {
-            Blank(ref blank) => blank.render_into(target),
-            Content(ref content) => content.render_into(target),
+            Blank(ref blank) => blank.fmt(formatter, context),
+            Content(ref content) => content.fmt(formatter, context),
         }
     }
 }
@@ -279,7 +279,8 @@ where
     M: MorphemeKind,
 {
     type RawText = T;
-    type Morpheme<'t> = MorphemeFor<'t, M>
+    type Morpheme<'t>
+        = MorphemeFor<'t, M>
     where
         Self: 't;
     type Index = usize;
@@ -309,17 +310,14 @@ where
     }
 }
 
-impl<T, M> Render for BlankSegment<T, M>
+impl<T, M, S> Render<S> for BlankSegment<T, M>
 where
     T: RawText,
     M: MorphemeKind,
+    S: AnsiPrefix,
 {
-    fn render(&self) -> Cow<str> {
-        self.to_string().into()
-    }
-
-    fn render_into(&self, target: &mut impl Write) -> io::Result<()> {
-        target.write_all(self.to_string().as_bytes())
+    fn fmt(&self, formatter: &mut Formatter, context: &mut RenderContext<S>) -> fmt::Result {
+        context.fmt_with_ansi_fence(formatter, self.to_string())
     }
 }
 
@@ -499,7 +497,8 @@ where
     M: MorphemeKind,
 {
     type RawText = T;
-    type Morpheme<'t> = MorphemeFor<'t, M>
+    type Morpheme<'t>
+        = MorphemeFor<'t, M>
     where
         Self: 't;
     type Index = usize;
@@ -545,17 +544,14 @@ where
     }
 }
 
-impl<T, M> Render for ContentSegment<T, M>
+impl<T, M, S> Render<S> for ContentSegment<T, M>
 where
     T: RawText,
     M: MorphemeKind,
+    S: AnsiPrefix,
 {
-    fn render(&self) -> Cow<str> {
-        self.text.as_ref().into()
-    }
-
-    fn render_into(&self, target: &mut impl Write) -> io::Result<()> {
-        target.write_all(self.text.as_ref().as_bytes())
+    fn fmt(&self, formatter: &mut Formatter, context: &mut RenderContext<S>) -> fmt::Result {
+        context.fmt_with_ansi_fence(formatter, self.as_str())
     }
 }
 

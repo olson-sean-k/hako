@@ -5,7 +5,7 @@ use std::io::{self, Write};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr as UnicodeWidth;
 
-use crate::Render;
+use crate::RenderContextless;
 
 pub(crate) trait ContentSlice<C>
 where
@@ -163,7 +163,7 @@ pub enum Layer<T = ()> {
     Back(T),
 }
 
-pub trait Content: Clone + Debug + Sized + Render {
+pub trait Content: Clone + Debug + Sized + RenderContextless {
     fn empty() -> Self;
 
     fn grapheme(glyph: Grapheme) -> Self;
@@ -516,7 +516,7 @@ where
     }
 }
 
-impl<C, S> Render for Styled<C, S>
+impl<C, S> RenderContextless for Styled<C, S>
 where
     C: AsRef<str> + Content + From<String>,
     S: Style,

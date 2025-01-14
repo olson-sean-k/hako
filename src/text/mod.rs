@@ -6,6 +6,7 @@ pub mod annotation;
 pub mod geometry;
 pub mod morphology;
 pub mod ops;
+pub mod render;
 pub mod style;
 
 use itertools::Itertools;
@@ -386,7 +387,8 @@ where
 {
     type RawText = <T as BlockText>::RawText;
     type BlockText = T;
-    type Mapped<U> = U
+    type Mapped<U>
+        = U
     where
         U: BlockText;
 
@@ -464,7 +466,6 @@ mod tests {
     use crate::text::annotation::Annotated;
     use crate::text::morphology::FlexKind;
     use crate::text::{self, StrExt as _};
-    use crate::Render;
 
     #[test]
     fn split_at_ascii_line_breaks() {
@@ -502,11 +503,11 @@ mod tests {
         let segment: text::Segment<_, _> = text::ContentSegment::<&str>::try_from_raw_text("text")
             .unwrap()
             .into();
-        assert_eq!(segment.render(), "text");
+        assert_eq!(segment.display().to_string(), "text");
         let annotated = Annotated::inert(segment, 0usize);
-        assert_eq!(annotated.render(), "text");
+        assert_eq!(annotated.display().to_string(), "text");
         let line: text::Line<_> = [annotated.clone(), annotated].into_iter().collect();
-        assert_eq!(line.render(), "texttext");
+        assert_eq!(line.display().to_string(), "texttext");
     }
 
     // TODO: Assert that the ANSI8 escape codes are present and correct in the rendered text.
@@ -525,8 +526,6 @@ mod tests {
         let blue = owo_colors::Style::new().blue();
         let bold = owo_colors::Style::new().bold();
 
-        // FIXME: The bold style is only applied to the first segment, but should be applied to the
-        //        entire line. See TODOs in the `style` module.
         let line = Line::try_from_segments([
             "red".style(&red),
             "green".style(&green),
@@ -534,7 +533,7 @@ mod tests {
         ])
         .unwrap()
         .style(&bold);
-        //eprintln!("{:#?}", line);
-        eprintln!("{}", line.render());
+        //eprintln!("{:#?}", line.display().to_string().chars());
+        eprintln!("{}", line.display());
     }
 }

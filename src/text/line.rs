@@ -1,19 +1,19 @@
 use itertools::Itertools;
 use std::borrow::Cow;
-use std::fmt::Debug;
-use std::io::{self, Write};
+use std::fmt::{self, Debug, Display, Formatter};
 
 use crate::cow::MoveCow;
 use crate::slice::{SliceExt as _, SliceProjection};
 use crate::text::annotation::Annotated;
 use crate::text::geometry::{AsBlockGeometry, BlockGeometry, LinearGeometry};
 use crate::text::morphology::{Grapheme, MorphemeFor, MorphemeKind};
+use crate::text::render::{AsDisplay, Render, RenderContext};
 use crate::text::segment::{BlankSegment, ContentSegment, Segment, SegmentFor};
+use crate::text::style::AnsiPrefix;
 use crate::text::{
     ops, BlockText, BlockTextProjection, Indexed, MorphologyError, RawText, StrExt as _,
     TryFromText,
 };
-use crate::Render;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct LineIndex {
@@ -146,6 +146,13 @@ where
         }
     }
 
+    pub fn display(&self) -> impl '_ + Display
+    where
+        Self: Render<()>,
+    {
+        AsDisplay::from(self)
+    }
+
     // CLIPPY: This appears to be a false positive. An explicit lifetime is necessary for the GATs.
     #[allow(clippy::needless_lifetimes)]
     pub fn as_block_geometry<'b>(
@@ -220,7 +227,8 @@ where
     M: MorphemeKind,
 {
     type RawText = T::RawText;
-    type Morpheme<'t> = MorphemeFor<'t, M>
+    type Morpheme<'t>
+        = MorphemeFor<'t, M>
     where
         Self: 't;
     type Index = LineIndex;
@@ -272,23 +280,14 @@ where
 
 // TODO: It may be a good idea to `coalesce` styled lines to avoid unnecessary ANSI escape codes.
 //       This can't be done in the `Render` trait without a clone though.
-impl<T> Render for Line<T>
+impl<T, S> Render<S> for Line<T>
 where
-    T: Render,
+    T: Render<S>,
+    S: AnsiPrefix,
 {
-    fn render(&self) -> Cow<str> {
-        self.segments
-            .iter()
-            .fold(String::new(), |mut rendered, segment| {
-                rendered.push_str(segment.render().as_ref());
-                rendered
-            })
-            .into()
-    }
-
-    fn render_into(&self, target: &mut impl Write) -> io::Result<()> {
-        for segment in self.segments.iter() {
-            target.write_all(segment.render().as_bytes())?;
+    fn fmt(&self, formatter: &mut Formatter, context: &mut RenderContext<S>) -> fmt::Result {
+        for segment in &self.segments {
+            segment.fmt(formatter, context)?;
         }
         Ok(())
     }
