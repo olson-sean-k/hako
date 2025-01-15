@@ -322,7 +322,23 @@ where
     S: AnsiPrefix,
 {
     fn fmt(&self, formatter: &mut Formatter, context: &mut RenderContext<S>) -> fmt::Result {
-        context.fmt_with_ansi_fence(formatter, self.to_string())
+        struct Renderer<'s, T, M>(&'s BlankSegment<T, M>);
+
+        impl<T, M> Display for Renderer<'_, T, M>
+        where
+            T: RawText,
+            M: MorphemeKind,
+        {
+            fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+                let morpheme = M::min_width_blank();
+                for _ in 0..self.0.width() {
+                    write!(formatter, "{}", morpheme.as_ref())?;
+                }
+                Ok(())
+            }
+        }
+
+        context.fmt_with_ansi_fence(formatter, Renderer(self))
     }
 }
 
