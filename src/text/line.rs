@@ -1,5 +1,6 @@
 use itertools::Itertools;
 use std::borrow::Cow;
+use std::convert::Infallible;
 use std::fmt::{self, Debug, Display, Formatter};
 
 use crate::cow::MoveCow;
@@ -48,12 +49,12 @@ where
     T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>,
     M: MorphemeKind,
 {
-    pub fn try_from_raw_text<U>(text: U) -> Result<Self, MorphologyError>
+    pub fn try_from_raw_text<U>(text: U) -> Result<Self, T::Error>
     where
         T: TryFromText<U>,
         U: RawText,
     {
-        Line::try_from_text(text)
+        T::try_from_text(text).map(|segment| Line::from(vec![segment]))
     }
 
     pub fn try_from_raw_text_or_joined<U>(text: U) -> Result<Self, MorphologyError>
@@ -67,7 +68,7 @@ where
             .map(|segment| Line::from(vec![segment.into()]))
     }
 
-    pub fn try_from_raw_text_or_split<U>(text: U) -> Result<Vec<Self>, MorphologyError>
+    pub fn try_from_raw_text_or_split<U>(text: U) -> Result<Vec<Self>, T::Error>
     where
         T: TryFromText<String>,
         U: RawText,
@@ -83,15 +84,16 @@ where
 
     pub fn try_from_width(width: usize) -> Result<Self, MorphologyError>
     where
+        MorphologyError: From<T::Error>,
         T: TryFromText<Segment<T::RawText, M>>,
     {
         BlankSegment::try_from_width(width)
             .map(Segment::from)
-            .and_then(T::try_from_text)
+            .and_then(|segment| T::try_from_text(segment).map_err(Into::into))
             .map(|segment| Line::from(vec![segment]))
     }
 
-    pub fn try_from_segments<I>(segments: I) -> Result<Self, MorphologyError>
+    pub fn try_from_segments<I>(segments: I) -> Result<Self, T::Error>
     where
         T: TryFromText<I::Item>,
         I: IntoIterator,
@@ -215,14 +217,6 @@ where
     }
 }
 
-impl<T> Default for Line<T> {
-    fn default() -> Self {
-        Line {
-            segments: Default::default(),
-        }
-    }
-}
-
 impl<T, M> BlockText for Line<T>
 where
     T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>,
@@ -248,6 +242,14 @@ where
                     })
                 })
             })
+    }
+}
+
+impl<T> Default for Line<T> {
+    fn default() -> Self {
+        Line {
+            segments: Default::default(),
+        }
     }
 }
 
@@ -297,7 +299,9 @@ where
 }
 
 impl<T> TryFromText<Line<T>> for Line<T> {
-    fn try_from_text(line: Line<T>) -> Result<Self, MorphologyError> {
+    type Error = Infallible;
+
+    fn try_from_text(line: Line<T>) -> Result<Self, Self::Error> {
         Ok(line)
     }
 }
@@ -309,7 +313,9 @@ where
     M: MorphemeKind,
     U: RawText,
 {
-    fn try_from_text(text: U) -> Result<Self, MorphologyError> {
-        T::try_from_text(text).map(|segment| Line::from(vec![segment]))
+    type Error = T::Error;
+
+    fn try_from_text(text: U) -> Result<Self, Self::Error> {
+        Line::try_from_raw_text(text)
     }
 }

@@ -2,7 +2,7 @@ use std::fmt::{self, Debug, Display, Formatter};
 
 use crate::text::render::{AsDisplay, Render, RenderContext, RenderNode};
 use crate::text::style::{AnsiPrefix, Style};
-use crate::text::{BlockText, BlockTextProjection, MorphologyError, RawText, TryFromText};
+use crate::text::{BlockText, BlockTextProjection, RawText, TryFromText};
 
 // TODO: Prevent nested annotations.
 pub trait Annotate: Sized {
@@ -163,7 +163,9 @@ where
     T: TryFromText<U>,
     U: RawText,
 {
-    fn try_from_text(annotated: AnnotatedText<U, A>) -> Result<Self, MorphologyError> {
+    type Error = T::Error;
+
+    fn try_from_text(annotated: AnnotatedText<U, A>) -> Result<Self, Self::Error> {
         let AnnotatedText { text, annotation } = annotated;
         T::try_from_text(text).map(move |text| AnnotatedText { text, annotation })
     }

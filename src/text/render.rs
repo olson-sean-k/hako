@@ -3,6 +3,10 @@ use std::marker::PhantomData;
 
 use crate::text::style::{AnsiPrefix, AnsiSuffix, Style};
 
+// TODO: Though it may introduce some tricky indirection, it may be useful for `Render`
+//       implementations and `display` functions to only require style types that can differ but
+//       coerce to a common type. This would support block text types where, for example, one type
+//       moves a style type `S` while a composed type borrows a style type `&'_ S`.
 pub trait Render<S> {
     fn fmt(&self, formatter: &mut Formatter, context: &mut RenderContext<S>) -> fmt::Result;
 }
@@ -42,7 +46,9 @@ where
 }
 
 // TODO: Most style types are likely inexpensive to clone, but render nodes should probably store a
-//       reference instead.
+//       reference instead. Note though that it is possible for `S` to a reference type!
+//       Ultimately, a `Reborrow<Target = S>` trait is likely the best way to ensure that a direct
+//       reference is always stored.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderNode<S> {
     pub style: Style<S>,

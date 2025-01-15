@@ -1,6 +1,7 @@
 use derive_where::derive_where;
 use itertools::Itertools;
 use std::borrow::Cow;
+use std::convert::Infallible;
 use std::fmt::{self, Display, Formatter};
 use std::iter;
 use std::marker::PhantomData;
@@ -164,7 +165,9 @@ where
 }
 
 impl<T, M> TryFromText<Segment<T, M>> for Segment<T, M> {
-    fn try_from_text(segment: Segment<T, M>) -> Result<Self, MorphologyError> {
+    type Error = Infallible;
+
+    fn try_from_text(segment: Segment<T, M>) -> Result<Self, Self::Error> {
         Ok(segment)
     }
 }
@@ -175,7 +178,9 @@ where
     U: RawText,
     M: MorphemeKind,
 {
-    fn try_from_text(text: U) -> Result<Self, MorphologyError> {
+    type Error = MorphologyError;
+
+    fn try_from_text(text: U) -> Result<Self, Self::Error> {
         ContentSegment::try_from_text(text).map(From::from)
     }
 }
@@ -334,7 +339,9 @@ where
 }
 
 impl<T, M> TryFromText<BlankSegment<T, M>> for BlankSegment<T, M> {
-    fn try_from_text(segment: BlankSegment<T, M>) -> Result<Self, MorphologyError> {
+    type Error = Infallible;
+
+    fn try_from_text(segment: BlankSegment<T, M>) -> Result<Self, Self::Error> {
         Ok(segment)
     }
 }
@@ -368,7 +375,22 @@ where
         T: RawText + TryFrom<MoveCow<U>>,
         U: RawText,
     {
-        ContentSegment::try_from_text(text)
+        let text: T = text
+            .strip_control_and_layout_points()
+            .try_into()
+            .map_err(|_| MorphologyError)?;
+        if text
+            .as_ref()
+            .graphemes()
+            .map(Indexed::into_text)
+            .map(MorphemeFor::<M>::try_from)
+            .all(|morpheme| morpheme.is_ok())
+        {
+            Ok(ContentSegment::from_raw_text_unchecked(text))
+        }
+        else {
+            Err(MorphologyError)
+        }
     }
 
     pub fn try_from_raw_text_or_joined<U>(text: U) -> Result<Self, MorphologyError>
@@ -618,7 +640,9 @@ where
 }
 
 impl<T, M> TryFromText<ContentSegment<T, M>> for ContentSegment<T, M> {
-    fn try_from_text(segment: ContentSegment<T, M>) -> Result<Self, MorphologyError> {
+    type Error = Infallible;
+
+    fn try_from_text(segment: ContentSegment<T, M>) -> Result<Self, Self::Error> {
         Ok(segment)
     }
 }
@@ -629,22 +653,9 @@ where
     U: RawText,
     M: MorphemeKind,
 {
-    fn try_from_text(text: U) -> Result<Self, MorphologyError> {
-        let text: T = text
-            .strip_control_and_layout_points()
-            .try_into()
-            .map_err(|_| MorphologyError)?;
-        if text
-            .as_ref()
-            .graphemes()
-            .map(Indexed::into_text)
-            .map(MorphemeFor::<M>::try_from)
-            .all(|morpheme| morpheme.is_ok())
-        {
-            Ok(ContentSegment::from_raw_text_unchecked(text))
-        }
-        else {
-            Err(MorphologyError)
-        }
+    type Error = MorphologyError;
+
+    fn try_from_text(text: U) -> Result<Self, Self::Error> {
+        ContentSegment::try_from_raw_text(text)
     }
 }

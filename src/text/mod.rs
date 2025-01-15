@@ -37,6 +37,12 @@ impl From<ControlError> for BlockTextError {
     }
 }
 
+impl From<Infallible> for BlockTextError {
+    fn from(_: Infallible) -> Self {
+        unreachable!()
+    }
+}
+
 impl From<MorphologyError> for BlockTextError {
     fn from(error: MorphologyError) -> Self {
         BlockTextError::Morphology(error)
@@ -328,8 +334,13 @@ impl<N, T> From<(N, T)> for Indexed<N, T> {
     }
 }
 
+// Some types have infallible identity implementations of this conversion trait. This trait is not
+// paired with a `FromText` trait with an infallible blanket implementation, because this prevents
+// some important general implementations of `TryFromText`.
 pub trait TryFromText<T>: Sized {
-    fn try_from_text(text: T) -> Result<Self, MorphologyError>;
+    type Error;
+
+    fn try_from_text(text: T) -> Result<Self, Self::Error>;
 }
 
 pub trait BlockText:
@@ -522,7 +533,7 @@ mod tests {
         type Line<'t> = text::Line<Segment<'t>>;
 
         let red = owo_colors::Style::new().red();
-        let green = owo_colors::Style::new().green();
+        let green = owo_colors::Style::new().green().blink();
         let blue = owo_colors::Style::new().blue();
         let bold = owo_colors::Style::new().bold();
 
