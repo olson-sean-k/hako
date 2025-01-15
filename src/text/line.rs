@@ -134,6 +134,7 @@ where
             .project(BlockTextProjection::as_block_text)
     }
 
+    // Unlike `fmt` and `display`, this string is not terminated with a new line.
     pub fn to_string(&self) -> Cow<'_, str> {
         let segments = self.segments();
         match segments.len() {
@@ -290,6 +291,7 @@ where
         for segment in &self.segments {
             segment.fmt(formatter, context)?;
         }
+        writeln!(formatter)?;
         Ok(())
     }
 }
