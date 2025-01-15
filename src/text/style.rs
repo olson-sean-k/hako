@@ -1,10 +1,15 @@
 use std::fmt::{self, Display, Formatter};
 
 use crate::text::annotation::AnnotatedText;
+use crate::text::morphology::FlexKind;
+use crate::text::{Line, Segment};
 
 const ANSI_RESET_ESCAPE_SEQUENCE: &str = "\u{1b}[0m";
 
 pub type StyledText<T, S> = AnnotatedText<T, Style<S>>;
+
+pub type StyledSegment<S, T = String, M = FlexKind> = StyledText<Segment<T, M>, S>;
+pub type StyledLine<S, T = String, M = FlexKind> = StyledText<Line<StyledSegment<T, M, S>>, S>;
 
 pub trait AnsiPrefix {
     fn fmt(&self, formatter: &mut Formatter) -> fmt::Result;

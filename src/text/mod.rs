@@ -475,8 +475,7 @@ pub(self) fn uax29_text_grapheme_indices(
 #[cfg(test)]
 mod tests {
     use crate::text::annotation::AnnotatedText;
-    use crate::text::morphology::FlexKind;
-    use crate::text::{self, StrExt as _};
+    use crate::text::{ContentSegment, Line, Segment, StrExt as _};
 
     #[test]
     fn split_at_ascii_line_breaks() {
@@ -499,10 +498,7 @@ mod tests {
 
     #[test]
     fn line_from_split_text() {
-        type Segment<T> = text::Segment<T, FlexKind>;
-        type Line<T> = text::Line<Segment<T>>;
-
-        let lines = Line::<String>::try_from_raw_text_or_split("text\ntext").unwrap();
+        let lines = Line::<Segment>::try_from_raw_text_or_split("text\ntext").unwrap();
         assert_eq!(lines.len(), 2);
         for line in lines {
             assert_eq!(line.to_string(), "text");
@@ -511,33 +507,31 @@ mod tests {
 
     #[test]
     fn render_block_text() {
-        let segment: text::Segment<_, _> = text::ContentSegment::<&str>::try_from_raw_text("text")
+        let segment: Segment<_, _> = ContentSegment::<&str>::try_from_raw_text("text")
             .unwrap()
             .into();
         assert_eq!(segment.display().to_string(), "text");
         let annotated = AnnotatedText::attached(segment, 0usize);
         assert_eq!(annotated.display::<()>().to_string(), "text");
-        let line: text::Line<_> = [annotated.clone(), annotated].into_iter().collect();
+        let line: Line<_> = [annotated.clone(), annotated].into_iter().collect();
         assert_eq!(line.display::<()>().to_string(), "texttext\n");
     }
 
     // TODO: Assert that the ANSI8 escape codes are present and correct in the rendered text.
     #[cfg(feature = "owo-colors")]
     #[test]
-    fn render_styled_block_text() {
+    fn render_styled_block_text1() {
         use crate::text::annotation::Annotate;
-        use crate::text::style;
+        use crate::text::style::StyledSegment;
 
-        type Style<'s> = &'s owo_colors::Style;
-        type Segment<'t> = style::StyledText<text::Segment<&'t str>, Style<'t>>;
-        type Line<'t> = text::Line<Segment<'t>>;
+        pub type Style = owo_colors::Style;
 
         let red = owo_colors::Style::new().red();
         let green = owo_colors::Style::new().green().blink();
         let blue = owo_colors::Style::new().blue();
         let bold = owo_colors::Style::new().bold();
 
-        let line = Line::try_from_segments([
+        let line = Line::<StyledSegment<&Style>>::try_from_segments([
             "red".style(&red),
             "green".style(&green),
             "blue".style(&blue),
