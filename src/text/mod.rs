@@ -20,6 +20,7 @@ use crate::cow::{IntoWritten, MoveCow};
 use crate::text::morphology::{Grapheme, Morpheme};
 
 pub use crate::text::line::{Line, LineIndex};
+pub use crate::text::modal::ModalWidth;
 pub use crate::text::segment::{BlankSegment, ContentSegment, Segment};
 
 const CR: u8 = b'\r';
