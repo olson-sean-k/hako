@@ -230,11 +230,11 @@ where
         BlankSegment::from_width_unchecked(0)
     }
 
-    pub fn from_morpheme_count(n: usize) -> Self {
-        BlankSegment::from_width_unchecked(
-            n.checked_mul(M::MIN_WIDTH.get())
-                .expect("overflow determining width"),
-        )
+    pub fn from_min_width_morpheme_count(n: usize) -> (Self, usize) {
+        let width = n
+            .checked_mul(M::MIN_WIDTH.get())
+            .expect("overflow determining width");
+        (BlankSegment::from_width_unchecked(width), width)
     }
 
     pub fn is_empty(&self) -> bool {
