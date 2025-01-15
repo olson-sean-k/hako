@@ -30,7 +30,7 @@ where
     T: RawText,
     M: MorphemeKind,
 {
-    pub fn to_string<'s>(&'s self) -> Cow<'s, str> {
+    pub fn to_string(&self) -> Cow<'_, str> {
         match self.modal {
             Blank(ref blank) => blank.to_string().into(),
             Content(ref content) => content.as_ref().into(),

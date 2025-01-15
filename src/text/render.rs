@@ -17,7 +17,7 @@ where
 }
 
 #[derive(Debug)]
-pub struct AsDisplay<'r, T, S = ()> {
+pub(crate) struct AsDisplay<'r, T, S = ()> {
     text: &'r T,
     phantom: PhantomData<fn() -> S>,
 }

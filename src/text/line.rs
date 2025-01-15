@@ -146,9 +146,10 @@ where
         }
     }
 
-    pub fn display(&self) -> impl '_ + Display
+    pub fn display<'d, S>(&'d self) -> impl 'd + Display
     where
-        Self: Render<()>,
+        Self: Render<S>,
+        S: 'd + AnsiPrefix,
     {
         AsDisplay::from(self)
     }

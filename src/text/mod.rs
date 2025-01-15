@@ -505,9 +505,9 @@ mod tests {
             .into();
         assert_eq!(segment.display().to_string(), "text");
         let annotated = Annotated::inert(segment, 0usize);
-        assert_eq!(annotated.display().to_string(), "text");
+        assert_eq!(annotated.display::<()>().to_string(), "text");
         let line: text::Line<_> = [annotated.clone(), annotated].into_iter().collect();
-        assert_eq!(line.display().to_string(), "texttext");
+        assert_eq!(line.display::<()>().to_string(), "texttext");
     }
 
     // TODO: Assert that the ANSI8 escape codes are present and correct in the rendered text.

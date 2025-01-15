@@ -94,11 +94,12 @@ impl<T, A> Annotated<T, Attachment<A>> {
         &self.annotation.0
     }
 
-    pub fn display(&self) -> impl '_ + Display
+    pub fn display<'d, S>(&'d self) -> impl 'd + Display
     where
-        Self: Render<()>,
+        Self: Render<S>,
+        S: 'd + AnsiPrefix,
     {
-        AsDisplay::from(self)
+        AsDisplay::<_, S>::from(self)
     }
 }
 
