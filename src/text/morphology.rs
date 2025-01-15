@@ -15,8 +15,16 @@ pub struct Grapheme<'t> {
 }
 
 impl<'t> Grapheme<'t> {
-    pub(in crate::text) const fn from_string_unchecked(text: Cow<'t, str>) -> Self {
+    pub const fn from_string_unchecked(text: Cow<'t, str>) -> Self {
         Grapheme { text }
+    }
+
+    pub fn assert<T>(text: T) -> Self
+    where
+        Self: TryFrom<T>,
+        <Self as TryFrom<T>>::Error: Debug,
+    {
+        Grapheme::try_from(text).unwrap()
     }
 
     pub fn from_point(point: char) -> Grapheme<'static> {
@@ -49,7 +57,7 @@ impl<'t> AsRef<str> for Grapheme<'t> {
     }
 }
 
-// No single Unicode code point encodes more than one grapheme.
+// No single Unicode code point encodes more than one grapheme cluster.
 impl<'t> From<char> for Grapheme<'t> {
     fn from(point: char) -> Self {
         Grapheme::from_string_unchecked(point.to_string().into())
@@ -173,6 +181,23 @@ pub type MorphemeFor<'t, M> = <M as MorphemeKind>::Morpheme<'t>;
 pub type Flex<'t> = ModalWidth<Narrow<'t>, Wide<'t>>;
 
 impl<'t> Flex<'t> {
+    pub const fn from_narrow(narrow: Narrow<'t>) -> Self {
+        Flex::Narrow(narrow)
+    }
+
+    pub const fn from_wide(wide: Wide<'t>) -> Self {
+        Flex::Wide(wide)
+    }
+
+    pub fn assert<T>(text: T) -> Self
+    where
+        Self: TryFrom<Grapheme<'t>, Error = <Grapheme<'t> as TryFrom<T>>::Error>,
+        Grapheme<'t>: TryFrom<T>,
+        <Grapheme<'t> as TryFrom<T>>::Error: Debug,
+    {
+        Grapheme::try_from(text).and_then(Flex::try_from).unwrap()
+    }
+
     pub fn into_owned(self) -> Flex<'t> {
         match self {
             Flex::Narrow(narrow) => Flex::Narrow(narrow.into_owned()),
@@ -199,13 +224,13 @@ impl AsRef<str> for Flex<'_> {
 
 impl<'t> From<Narrow<'t>> for Flex<'t> {
     fn from(narrow: Narrow<'t>) -> Self {
-        Flex::Narrow(narrow)
+        Flex::from_narrow(narrow)
     }
 }
 
 impl<'t> From<Wide<'t>> for Flex<'t> {
     fn from(wide: Wide<'t>) -> Self {
-        Flex::Wide(wide)
+        Flex::from_wide(wide)
     }
 }
 
@@ -258,6 +283,15 @@ impl<'t> Narrow<'t> {
 
     const fn from_grapheme_unchecked(grapheme: Grapheme<'t>) -> Self {
         Narrow { grapheme }
+    }
+
+    pub fn assert<T>(text: T) -> Self
+    where
+        Self: TryFrom<Grapheme<'t>, Error = <Grapheme<'t> as TryFrom<T>>::Error>,
+        Grapheme<'t>: TryFrom<T>,
+        <Grapheme<'t> as TryFrom<T>>::Error: Debug,
+    {
+        Grapheme::try_from(text).and_then(Narrow::try_from).unwrap()
     }
 
     pub const fn blank() -> Narrow<'static> {
@@ -335,6 +369,15 @@ impl<'t> Wide<'t> {
 
     const fn from_grapheme_unchecked(grapheme: Grapheme<'t>) -> Self {
         Wide { grapheme }
+    }
+
+    pub fn assert<T>(text: T) -> Self
+    where
+        Self: TryFrom<Grapheme<'t>, Error = <Grapheme<'t> as TryFrom<T>>::Error>,
+        Grapheme<'t>: TryFrom<T>,
+        <Grapheme<'t> as TryFrom<T>>::Error: Debug,
+    {
+        Grapheme::try_from(text).and_then(Wide::try_from).unwrap()
     }
 
     pub const fn blank() -> Wide<'static> {
