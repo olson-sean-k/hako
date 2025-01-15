@@ -4,7 +4,7 @@ use std::fmt::{self, Debug, Display, Formatter};
 
 use crate::cow::MoveCow;
 use crate::slice::{SliceExt as _, SliceProjection};
-use crate::text::annotation::Annotated;
+use crate::text::annotation::AnnotatedText;
 use crate::text::geometry::{AsBlockGeometry, BlockGeometry, LinearGeometry};
 use crate::text::morphology::{Grapheme, MorphemeFor, MorphemeKind};
 use crate::text::render::{AsDisplay, Render, RenderContext};
@@ -191,7 +191,7 @@ where
     }
 }
 
-impl<T, A> Line<Annotated<T, A>>
+impl<T, A> Line<AnnotatedText<T, A>>
 where
     T: ops::Append,
     A: Eq,

@@ -6,28 +6,28 @@ use crate::text::{BlockText, BlockTextProjection, MorphologyError, RawText, TryF
 
 // TODO: Prevent nested annotations.
 pub trait Annotate: Sized {
-    fn annotate<A>(self, annotation: A) -> Annotated<Self, A>;
+    fn annotate<A>(self, annotation: A) -> AnnotatedText<Self, A>;
 
-    fn attach<A>(self, annotation: A) -> Annotated<Self, Attachment<A>>;
+    fn attach<A>(self, annotation: A) -> AnnotatedText<Self, Attachment<A>>;
 
-    fn style<S>(self, style: S) -> Annotated<Self, Style<S>>
+    fn style<S>(self, style: S) -> AnnotatedText<Self, Style<S>>
     where
         S: AnsiPrefix;
 }
 
 impl<T> Annotate for T {
-    fn annotate<A>(self, annotation: A) -> Annotated<Self, A> {
-        Annotated {
+    fn annotate<A>(self, annotation: A) -> AnnotatedText<Self, A> {
+        AnnotatedText {
             text: self,
             annotation,
         }
     }
 
-    fn attach<A>(self, annotation: A) -> Annotated<Self, Attachment<A>> {
+    fn attach<A>(self, annotation: A) -> AnnotatedText<Self, Attachment<A>> {
         self.annotate(Attachment(annotation))
     }
 
-    fn style<S>(self, style: S) -> Annotated<Self, Style<S>>
+    fn style<S>(self, style: S) -> AnnotatedText<Self, Style<S>>
     where
         S: AnsiPrefix,
     {
@@ -39,58 +39,65 @@ impl<T> Annotate for T {
 pub struct Attachment<T>(pub T);
 
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
-pub struct Annotated<T, A = ()> {
+pub struct AnnotatedText<T, A = ()> {
     pub text: T,
     pub annotation: A,
 }
 
-impl<T, A> Annotated<T, A> {
+impl<T, A> AnnotatedText<T, A> {
     pub const fn annotate(text: T, annotation: A) -> Self {
-        Annotated { text, annotation }
+        AnnotatedText { text, annotation }
     }
 
     pub fn from_text(text: T) -> Self
     where
         A: Default,
     {
-        Annotated {
+        AnnotatedText {
             text,
             annotation: Default::default(),
         }
     }
 
-    pub fn map_text<U, F>(self, f: F) -> Annotated<U, A>
+    pub fn map_text<U, F>(self, f: F) -> AnnotatedText<U, A>
     where
         F: FnOnce(T) -> U,
     {
-        let Annotated { text, annotation } = self;
-        Annotated {
+        let AnnotatedText { text, annotation } = self;
+        AnnotatedText {
             text: f(text),
             annotation,
         }
     }
 
-    pub fn map_annotation<U, F>(self, f: F) -> Annotated<T, U>
+    pub fn map_annotation<U, F>(self, f: F) -> AnnotatedText<T, U>
     where
         F: FnOnce(A) -> U,
     {
-        let Annotated { text, annotation } = self;
-        Annotated {
+        let AnnotatedText { text, annotation } = self;
+        AnnotatedText {
             text,
             annotation: f(annotation),
         }
     }
 }
 
-impl<T, A> Annotated<T, Attachment<A>> {
-    pub const fn inert(text: T, annotation: A) -> Self {
-        Annotated {
+impl<T, A> AnnotatedText<T, Attachment<A>> {
+    pub const fn attached(text: T, attachment: A) -> Self {
+        AnnotatedText {
             text,
-            annotation: Attachment(annotation),
+            annotation: Attachment(attachment),
         }
     }
 
-    pub fn annotation(&self) -> &A {
+    pub fn map_attachment<U, F>(self, f: F) -> AnnotatedText<T, Attachment<U>>
+    where
+        F: FnOnce(A) -> U,
+    {
+        self.map_annotation(|Attachment(attachment)| Attachment(f(attachment)))
+    }
+
+    pub fn attachment(&self) -> &A {
         &self.annotation.0
     }
 
@@ -103,15 +110,22 @@ impl<T, A> Annotated<T, Attachment<A>> {
     }
 }
 
-impl<T, S> Annotated<T, Style<S>>
+impl<T, S> AnnotatedText<T, Style<S>>
 where
     S: AnsiPrefix,
 {
     pub const fn styled(text: T, style: S) -> Self {
-        Annotated {
+        AnnotatedText {
             text,
             annotation: Style::new(style),
         }
+    }
+
+    pub fn map_style<U, F>(self, f: F) -> AnnotatedText<T, Style<U>>
+    where
+        F: FnOnce(S) -> U,
+    {
+        self.map_annotation(|Style(style)| Style(f(style)))
     }
 
     pub fn style(&self) -> &S {
@@ -126,43 +140,43 @@ where
     }
 }
 
-impl<T, A> From<T> for Annotated<T, A>
+impl<T, A> From<T> for AnnotatedText<T, A>
 where
     A: Default,
 {
     fn from(text: T) -> Self {
-        Annotated {
+        AnnotatedText {
             text,
             annotation: A::default(),
         }
     }
 }
 
-impl<T, A> From<(T, A)> for Annotated<T, A> {
+impl<T, A> From<(T, A)> for AnnotatedText<T, A> {
     fn from((text, annotation): (T, A)) -> Self {
-        Annotated { text, annotation }
+        AnnotatedText { text, annotation }
     }
 }
 
-impl<T, U, A> TryFromText<Annotated<U, A>> for Annotated<T, A>
+impl<T, U, A> TryFromText<AnnotatedText<U, A>> for AnnotatedText<T, A>
 where
     T: TryFromText<U>,
     U: RawText,
 {
-    fn try_from_text(annotated: Annotated<U, A>) -> Result<Self, MorphologyError> {
-        let Annotated { text, annotation } = annotated;
-        T::try_from_text(text).map(move |text| Annotated { text, annotation })
+    fn try_from_text(annotated: AnnotatedText<U, A>) -> Result<Self, MorphologyError> {
+        let AnnotatedText { text, annotation } = annotated;
+        T::try_from_text(text).map(move |text| AnnotatedText { text, annotation })
     }
 }
 
-impl<T, A> BlockTextProjection for Annotated<T, A>
+impl<T, A> BlockTextProjection for AnnotatedText<T, A>
 where
     T: BlockText,
 {
     type RawText = <T as BlockText>::RawText;
     type BlockText = T;
     type Mapped<U>
-        = Annotated<U, A>
+        = AnnotatedText<U, A>
     where
         U: BlockText;
 
@@ -187,7 +201,7 @@ where
     }
 }
 
-impl<T, A, S> Render<S> for Annotated<T, Attachment<A>>
+impl<T, A, S> Render<S> for AnnotatedText<T, Attachment<A>>
 where
     T: Render<S>,
 {
@@ -201,7 +215,7 @@ where
 // sequences are applied completely to each segment. These escape sequences act much like commands
 // and do compose well. Render nodes provide a basic composition mechanism that favors the most
 // local styles (i.e., segment styles are applied after line styles).
-impl<T, S> Render<S> for Annotated<T, Style<S>>
+impl<T, S> Render<S> for AnnotatedText<T, Style<S>>
 where
     T: Render<S>,
     S: Clone,

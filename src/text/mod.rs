@@ -463,7 +463,7 @@ pub(self) fn uax29_text_grapheme_indices(
 
 #[cfg(test)]
 mod tests {
-    use crate::text::annotation::Annotated;
+    use crate::text::annotation::AnnotatedText;
     use crate::text::morphology::FlexKind;
     use crate::text::{self, StrExt as _};
 
@@ -504,7 +504,7 @@ mod tests {
             .unwrap()
             .into();
         assert_eq!(segment.display().to_string(), "text");
-        let annotated = Annotated::inert(segment, 0usize);
+        let annotated = AnnotatedText::attached(segment, 0usize);
         assert_eq!(annotated.display::<()>().to_string(), "text");
         let line: text::Line<_> = [annotated.clone(), annotated].into_iter().collect();
         assert_eq!(line.display::<()>().to_string(), "texttext");

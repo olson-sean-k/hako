@@ -1,10 +1,10 @@
 use std::fmt::{self, Display, Formatter};
 
-use crate::text::annotation::Annotated;
+use crate::text::annotation::AnnotatedText;
 
 const ANSI_RESET_ESCAPE_SEQUENCE: &str = "\u{1b}[0m";
 
-pub type StyledText<T, S> = Annotated<T, Style<S>>;
+pub type StyledText<T, S> = AnnotatedText<T, Style<S>>;
 
 pub trait AnsiPrefix {
     fn fmt(&self, formatter: &mut Formatter) -> fmt::Result;
@@ -66,7 +66,7 @@ impl Display for AnsiSuffix {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[repr(transparent)]
-pub struct Style<S>(S);
+pub struct Style<S>(pub(crate) S);
 
 impl<S> Style<S>
 where
