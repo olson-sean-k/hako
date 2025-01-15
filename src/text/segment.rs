@@ -300,7 +300,7 @@ where
     ) -> impl '_ + Clone + Iterator<Item = Indexed<Self::Index, Self::Morpheme<'_>>> {
         iter::repeat(M::min_width_blank())
             .enumerate()
-            .take(self.width / M::MIN_WIDTH.get())
+            .take(self.width / M::MIN_WIDTH)
             .map(move |(index, text)| Indexed { index, text })
     }
 }
@@ -330,8 +330,7 @@ where
             M: MorphemeKind,
         {
             fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-                let morpheme = M::min_width_blank();
-                for _ in 0..self.0.width() {
+                for morpheme in self.0.morphemes().map(Indexed::into_text) {
                     write!(formatter, "{}", morpheme.as_ref())?;
                 }
                 Ok(())
