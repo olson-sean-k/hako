@@ -215,7 +215,7 @@ where
 // Styled text pushes a render node with its style. Once a segment (leaf node) is reached in the
 // render call tree, the stack of styles is applied in order. This guarantees that ANSI escape
 // sequences are applied completely to each segment. These escape sequences act much like commands
-// and do compose well. Render nodes provide a basic composition mechanism that favors the most
+// and do not compose well. Render nodes provide a basic composition mechanism that favors the most
 // local styles (i.e., segment styles are applied after line styles).
 impl<T, S> Render<S> for AnnotatedText<T, Style<S>>
 where

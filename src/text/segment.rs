@@ -10,7 +10,7 @@ use crate::cow::MoveCow;
 use crate::text::geometry::{AsBlockGeometry, BlockGeometry, LinearGeometry};
 use crate::text::modal::ModalText;
 use crate::text::morphology::{FlexKind, Grapheme, Morpheme, MorphemeFor, MorphemeKind};
-use crate::text::render::{AsDisplay, Render, RenderContext};
+use crate::text::render::{AsDisplay, FmtWith, Render, RenderContext};
 use crate::text::style::AnsiPrefix;
 use crate::text::{
     ops, BlockText, BlockTextProjection, Indexed, MorphologyError, RawText, StrExt as _,
@@ -322,22 +322,15 @@ where
     S: AnsiPrefix,
 {
     fn fmt(&self, formatter: &mut Formatter, context: &mut RenderContext<S>) -> fmt::Result {
-        struct Renderer<'s, T, M>(&'s BlankSegment<T, M>);
-
-        impl<T, M> Display for Renderer<'_, T, M>
-        where
-            T: RawText,
-            M: MorphemeKind,
-        {
-            fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-                for morpheme in self.0.morphemes().map(Indexed::into_text) {
+        context.fmt_with_ansi_fence(
+            formatter,
+            FmtWith(|formatter| {
+                for morpheme in self.morphemes().map(Indexed::into_text) {
                     write!(formatter, "{}", morpheme.as_ref())?;
                 }
                 Ok(())
-            }
-        }
-
-        context.fmt_with_ansi_fence(formatter, Renderer(self))
+            }),
+        )
     }
 }
 

@@ -45,6 +45,29 @@ where
     }
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct FmtWith<F>(pub F)
+where
+    F: Fn(&mut Formatter<'_>) -> fmt::Result;
+
+impl<F> Debug for FmtWith<F>
+where
+    F: Fn(&mut Formatter<'_>) -> fmt::Result,
+{
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        (self.0)(formatter)
+    }
+}
+
+impl<F> Display for FmtWith<F>
+where
+    F: Fn(&mut Formatter<'_>) -> fmt::Result,
+{
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        (self.0)(formatter)
+    }
+}
+
 // TODO: Most style types are likely inexpensive to clone, but render nodes should probably store a
 //       reference instead. Note though that it is possible for `S` to a reference type!
 //       Ultimately, a `Reborrow<Target = S>` trait is likely the best way to ensure that a direct
