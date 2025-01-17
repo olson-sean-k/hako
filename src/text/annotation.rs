@@ -1,5 +1,6 @@
 use std::fmt::{self, Debug, Display, Formatter};
 
+use crate::text::geometry::LinearGeometry;
 use crate::text::render::{AsDisplay, Render, RenderContext, RenderNode};
 use crate::text::style::{AnsiPrefix, Style};
 use crate::text::{BlockText, BlockTextProjection, TryFromText};
@@ -154,6 +155,20 @@ where
     }
 }
 
+// TODO: Unlike actual block text types, `AnnotatedText` must provide explicit implementations of
+//       both `BlockGeometry` and `LinearGeometry`. This isn't possible, because the blanket
+//       implementation of `BlockGeometry` for `LinearGeometry` types conflicts! The alternative is
+//       to implement `BlockGeometry` for `AnnotatedText` where `T` is a more specific type (that
+//       is not `LinearGeometry`.
+//impl<T, A> BlockGeometry for AnnotatedText<T, A>
+//where
+//    T: BlockText + BlockGeometry,
+//{
+//    fn ascii_line_break_bounds(&self) -> BoundingBox<Self::Height> {
+//        self.text.ascii_line_break_bounds()
+//    }
+//}
+
 impl<T, A> BlockTextProjection for AnnotatedText<T, A>
 where
     T: BlockText,
@@ -201,6 +216,15 @@ where
 impl<T, A> From<(T, A)> for AnnotatedText<T, A> {
     fn from((text, annotation): (T, A)) -> Self {
         AnnotatedText { text, annotation }
+    }
+}
+
+impl<T, A> LinearGeometry for AnnotatedText<T, A>
+where
+    T: BlockText + LinearGeometry,
+{
+    fn width(&self) -> usize {
+        self.text.width()
     }
 }
 

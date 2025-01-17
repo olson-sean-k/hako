@@ -6,7 +6,7 @@ use std::fmt::{self, Debug, Display, Formatter};
 use crate::cow::MoveCow;
 use crate::slice::{SliceExt as _, SliceProjection};
 use crate::text::annotation::AnnotatedText;
-use crate::text::geometry::{AsBlockGeometry, BlockGeometry, LinearGeometry};
+use crate::text::geometry::LinearGeometry;
 use crate::text::morphology::{Grapheme, MorphemeFor, MorphemeKind};
 use crate::text::render::{AsDisplay, Render, RenderContext};
 use crate::text::segment::{BlankSegment, ContentSegment, Segment, SegmentFor};
@@ -147,14 +147,6 @@ where
         S: 'd + AnsiPrefix,
     {
         AsDisplay::from(self)
-    }
-
-    // CLIPPY: This appears to be a false positive. An explicit lifetime is necessary for the GATs.
-    #[allow(clippy::needless_lifetimes)]
-    pub fn as_block_geometry<'b>(
-        &'b self,
-    ) -> impl 'b + BlockGeometry<Morpheme<'b> = MorphemeFor<'b, M>, Index = LineIndex> {
-        AsBlockGeometry(self)
     }
 
     pub fn has_segments(&self) -> bool {

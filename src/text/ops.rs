@@ -40,11 +40,11 @@ pub trait Truncate: LinearGeometry {
 pub trait Extend: LinearGeometry {
     fn extend<'t, I>(&'t mut self, morphemes: I) -> usize
     where
-        I: IntoIterator<Item = Self::Morpheme<'t>>;
+        I: IntoIterator<Item = <Self::BlockText as BlockText>::Morpheme<'t>>;
 
     fn fill<'t, I>(&'t mut self, min: usize, morphemes: I) -> usize
     where
-        I: IntoIterator<Item = Self::Morpheme<'t>>,
+        I: IntoIterator<Item = <Self::BlockText as BlockText>::Morpheme<'t>>,
         I::IntoIter: Clone,
     {
         let mut width = self.width();

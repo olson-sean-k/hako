@@ -7,7 +7,7 @@ use std::iter;
 use std::marker::PhantomData;
 
 use crate::cow::MoveCow;
-use crate::text::geometry::{AsBlockGeometry, BlockGeometry, LinearGeometry};
+use crate::text::geometry::LinearGeometry;
 use crate::text::modal::ModalText;
 use crate::text::morphology::{FlexKind, Grapheme, Morpheme, MorphemeFor, MorphemeKind};
 use crate::text::render::{AsDisplay, FmtWith, Render, RenderContext};
@@ -40,14 +40,6 @@ where
 
     pub fn display(&self) -> impl '_ + Display {
         AsDisplay::<_, ()>::from(self)
-    }
-
-    // CLIPPY: This appears to be a false positive. An explicit lifetime is necessary for the GATs.
-    #[allow(clippy::needless_lifetimes)]
-    pub fn as_block_geometry<'b>(
-        &'b self,
-    ) -> impl 'b + BlockGeometry<Morpheme<'b> = MorphemeFor<'b, M>, Index = usize> {
-        AsBlockGeometry(self)
     }
 
     pub fn is_blank(&self) -> bool {
@@ -481,14 +473,6 @@ where
         AsRef::<str>::as_ref(self)
     }
 
-    // CLIPPY: This appears to be a false positive. An explicit lifetime is necessary for the GATs.
-    #[allow(clippy::needless_lifetimes)]
-    pub fn as_block_geometry<'b>(
-        &'b self,
-    ) -> impl 'b + BlockGeometry<Morpheme<'b> = MorphemeFor<'b, M>, Index = usize> {
-        AsBlockGeometry(self)
-    }
-
     pub fn is_blank(&self) -> bool {
         self.morphemes()
             .map(Indexed::into_text)
@@ -554,7 +538,7 @@ where
 {
     fn extend<'t, I>(&'t mut self, morphemes: I) -> usize
     where
-        I: IntoIterator<Item = Self::Morpheme<'t>>,
+        I: IntoIterator<Item = <Self::BlockText as BlockText>::Morpheme<'t>>,
     {
         self.text
             .to_string_mut()
