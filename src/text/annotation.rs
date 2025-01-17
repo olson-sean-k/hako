@@ -2,7 +2,7 @@ use std::fmt::{self, Debug, Display, Formatter};
 
 use crate::text::render::{AsDisplay, Render, RenderContext, RenderNode};
 use crate::text::style::{AnsiPrefix, Style};
-use crate::text::{BlockText, BlockTextProjection, RawText, TryFromText};
+use crate::text::{BlockText, BlockTextProjection, TryFromText};
 
 // TODO: Prevent nested annotations.
 pub trait Annotate: Sized {
@@ -82,6 +82,20 @@ impl<T, A> AnnotatedText<T, A> {
     }
 }
 
+impl<T, A> AnnotatedText<Option<T>, A> {
+    pub fn transpose(self) -> Option<AnnotatedText<T, A>> {
+        let AnnotatedText { text, annotation } = self;
+        text.map(|text| AnnotatedText { text, annotation })
+    }
+}
+
+impl<T, E, A> AnnotatedText<Result<T, E>, A> {
+    pub fn transpose(self) -> Result<AnnotatedText<T, A>, E> {
+        let AnnotatedText { text, annotation } = self;
+        text.map(|text| AnnotatedText { text, annotation })
+    }
+}
+
 impl<T, A> AnnotatedText<T, Attachment<A>> {
     pub const fn attached(text: T, attachment: A) -> Self {
         AnnotatedText {
@@ -140,37 +154,6 @@ where
     }
 }
 
-impl<T, A> From<T> for AnnotatedText<T, A>
-where
-    A: Default,
-{
-    fn from(text: T) -> Self {
-        AnnotatedText {
-            text,
-            annotation: A::default(),
-        }
-    }
-}
-
-impl<T, A> From<(T, A)> for AnnotatedText<T, A> {
-    fn from((text, annotation): (T, A)) -> Self {
-        AnnotatedText { text, annotation }
-    }
-}
-
-impl<T, U, A> TryFromText<AnnotatedText<U, A>> for AnnotatedText<T, A>
-where
-    T: TryFromText<U>,
-    U: RawText,
-{
-    type Error = T::Error;
-
-    fn try_from_text(annotated: AnnotatedText<U, A>) -> Result<Self, Self::Error> {
-        let AnnotatedText { text, annotation } = annotated;
-        T::try_from_text(text).map(move |text| AnnotatedText { text, annotation })
-    }
-}
-
 impl<T, A> BlockTextProjection for AnnotatedText<T, A>
 where
     T: BlockText,
@@ -203,6 +186,24 @@ where
     }
 }
 
+impl<T, A> From<T> for AnnotatedText<T, A>
+where
+    A: Default,
+{
+    fn from(text: T) -> Self {
+        AnnotatedText {
+            text,
+            annotation: A::default(),
+        }
+    }
+}
+
+impl<T, A> From<(T, A)> for AnnotatedText<T, A> {
+    fn from((text, annotation): (T, A)) -> Self {
+        AnnotatedText { text, annotation }
+    }
+}
+
 impl<T, A, S> Render<S> for AnnotatedText<T, Attachment<A>>
 where
     T: Render<S>,
@@ -231,5 +232,18 @@ where
                 },
             )
         })
+    }
+}
+
+impl<T, U, A> TryFromText<AnnotatedText<U, A>> for AnnotatedText<T, A>
+where
+    T: TryFromText<U>,
+{
+    // When `T` and `U` refer to the same type, `T::Error` will be `Infallible`.
+    type Error = T::Error;
+
+    fn try_from_text(annotated: AnnotatedText<U, A>) -> Result<Self, Self::Error> {
+        let AnnotatedText { text, annotation } = annotated;
+        T::try_from_text(text).map(move |text| AnnotatedText { text, annotation })
     }
 }

@@ -17,7 +17,7 @@ use std::ops::Range;
 use std::slice::SliceIndex;
 
 use crate::cow::{IntoWritten, MoveCow};
-use crate::text::morphology::{Grapheme, Morpheme};
+use crate::text::morphology::{Grapheme, Morpheme, MorphemeKind};
 
 pub use crate::text::line::{Line, LineIndex};
 pub use crate::text::modal::ModalWidth;
@@ -342,7 +342,25 @@ pub trait TryFromText<T>: Sized {
     type Error;
 
     fn try_from_text(text: T) -> Result<Self, Self::Error>;
+
+    fn assert(text: T) -> Self
+    where
+        Self::Error: Debug,
+    {
+        Self::try_from_text(text).expect("failed to construct block text")
+    }
 }
+
+pub trait TryIntoText<T>: Sized
+where
+    T: TryFromText<Self>,
+{
+    fn try_into_text(self) -> Result<T, T::Error> {
+        T::try_from_text(self)
+    }
+}
+
+impl<T, U> TryIntoText<U> for T where U: TryFromText<T> {}
 
 pub trait BlockText:
     BlockTextProjection<RawText = <Self as BlockText>::RawText, BlockText = Self>
@@ -433,6 +451,57 @@ where
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct BlankText(pub usize);
+
+impl BlankText {
+    pub const fn empty() -> Self {
+        BlankText(0)
+    }
+
+    pub fn from_min_width<M>(width: usize) -> Self
+    where
+        M: MorphemeKind,
+    {
+        BlankText(
+            width
+                .checked_add(width % M::MIN_WIDTH.get())
+                .expect("overflow determining width"),
+        )
+    }
+
+    pub fn from_max_width<M>(width: usize) -> Self
+    where
+        M: MorphemeKind,
+    {
+        BlankText(width.saturating_sub(width % M::MIN_WIDTH.get()))
+    }
+
+    pub fn from_min_width_morpheme_count<M>(n: usize) -> Self
+    where
+        M: MorphemeKind,
+    {
+        BlankText(
+            n.checked_mul(M::MIN_WIDTH.get())
+                .expect("overflow determining width"),
+        )
+    }
+
+    pub fn width(&self) -> usize {
+        self.0
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0 == 0
+    }
+}
+
+impl From<BlankText> for usize {
+    fn from(text: BlankText) -> Self {
+        text.0
+    }
+}
+
 pub(self) fn ucs_ascii_is_cr_lf(byte: u8) -> bool {
     matches!(byte, CR | LF)
 }
@@ -508,9 +577,7 @@ mod tests {
 
     #[test]
     fn render_block_text() {
-        let segment: Segment<_, _> = ContentSegment::<&str>::try_from_raw_text("text")
-            .unwrap()
-            .into();
+        let segment: Segment = ContentSegment::try_from_raw_text("text").unwrap().into();
         assert_eq!(segment.display().to_string(), "text");
         let annotated = AnnotatedText::attached(segment, 0usize);
         assert_eq!(annotated.display::<()>().to_string(), "text");
@@ -521,25 +588,25 @@ mod tests {
     // TODO: Assert that the ANSI8 escape codes are present and correct in the rendered text.
     #[cfg(feature = "owo-colors")]
     #[test]
-    fn render_styled_block_text1() {
+    fn render_styled_block_text() {
+        use owo_colors::Style;
+
         use crate::text::annotation::Annotate;
-        use crate::text::style::StyledSegment;
+        use crate::text::{BlankText, TryFromText};
 
-        pub type Style = owo_colors::Style;
+        let red = Style::new().red();
+        let green = Style::new().green().blink();
+        let blue = Style::new().blue();
+        let bold = Style::new().bold();
 
-        let red = owo_colors::Style::new().red();
-        let green = owo_colors::Style::new().green().blink();
-        let blue = owo_colors::Style::new().blue();
-        let bold = owo_colors::Style::new().bold();
-
-        let line = Line::<StyledSegment<&Style>>::try_from_segments([
-            "red".style(&red),
-            "green".style(&green),
-            "blue".style(&blue),
+        let line = Line::from_iter([
+            Segment::<&str>::assert("red").style(red),
+            Segment::assert(BlankText(3)).into(),
+            Segment::assert("green").style(green),
+            Segment::assert(BlankText(3)).into(),
+            Segment::assert("blue").style(blue),
         ])
-        .unwrap()
-        .style(&bold);
-        //eprint!("{:#?}", line.display().to_string().chars());
+        .style(bold);
         eprint!("{}", line.display());
     }
 }

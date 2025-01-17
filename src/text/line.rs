@@ -12,7 +12,7 @@ use crate::text::render::{AsDisplay, Render, RenderContext};
 use crate::text::segment::{BlankSegment, ContentSegment, Segment, SegmentFor};
 use crate::text::style::AnsiPrefix;
 use crate::text::{
-    ops, BlockText, BlockTextProjection, Indexed, MorphologyError, RawText, StrExt as _,
+    ops, BlankText, BlockText, BlockTextProjection, Indexed, MorphologyError, RawText, StrExt as _,
     TryFromText,
 };
 
@@ -49,14 +49,6 @@ where
     T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>,
     M: MorphemeKind,
 {
-    pub fn try_from_raw_text<U>(text: U) -> Result<Self, T::Error>
-    where
-        T: TryFromText<U>,
-        U: RawText,
-    {
-        T::try_from_text(text).map(|segment| Line::from(vec![segment]))
-    }
-
     pub fn try_from_raw_text_or_joined<U>(text: U) -> Result<Self, MorphologyError>
     where
         T: From<Segment<T::RawText, M>>,
@@ -78,7 +70,7 @@ where
         text.as_ref()
             .split_at_ascii_line_breaks()
             .map(String::from)
-            .map(Line::try_from_raw_text)
+            .map(Line::try_from_text)
             .collect()
     }
 
@@ -298,6 +290,35 @@ where
     }
 }
 
+impl<T, M, U, A> TryFromText<AnnotatedText<U, A>> for Line<AnnotatedText<T, A>>
+where
+    T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>
+        + TryFromText<U>,
+    M: MorphemeKind,
+{
+    type Error = T::Error;
+
+    fn try_from_text(annotated: AnnotatedText<U, A>) -> Result<Self, Self::Error> {
+        annotated
+            .map_text(T::try_from_text)
+            .transpose()
+            .map(|segment| Line::from(vec![segment]))
+    }
+}
+
+impl<T, M> TryFromText<BlankText> for Line<T>
+where
+    T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>
+        + TryFromText<BlankText>,
+    M: MorphemeKind,
+{
+    type Error = T::Error;
+
+    fn try_from_text(text: BlankText) -> Result<Self, Self::Error> {
+        T::try_from_text(text).map(|segment| Line::from(vec![segment]))
+    }
+}
+
 impl<T> TryFromText<Line<T>> for Line<T> {
     type Error = Infallible;
 
@@ -316,6 +337,6 @@ where
     type Error = T::Error;
 
     fn try_from_text(text: U) -> Result<Self, Self::Error> {
-        Line::try_from_raw_text(text)
+        T::try_from_text(text).map(|segment| Line::from(vec![segment]))
     }
 }

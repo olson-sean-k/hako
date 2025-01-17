@@ -13,7 +13,7 @@ use crate::text::morphology::{FlexKind, Grapheme, Morpheme, MorphemeFor, Morphem
 use crate::text::render::{AsDisplay, FmtWith, Render, RenderContext};
 use crate::text::style::AnsiPrefix;
 use crate::text::{
-    ops, BlockText, BlockTextProjection, Indexed, MorphologyError, RawText, StrExt as _,
+    ops, BlankText, BlockText, BlockTextProjection, Indexed, MorphologyError, RawText, StrExt as _,
     ToStringMut, TryFromText,
 };
 
@@ -158,9 +158,21 @@ where
 {
     fn fmt(&self, formatter: &mut Formatter, context: &mut RenderContext<S>) -> fmt::Result {
         match self.modal {
-            Blank(ref blank) => blank.fmt(formatter, context),
-            Content(ref content) => content.fmt(formatter, context),
+            Blank(ref blank) => Render::fmt(blank, formatter, context),
+            Content(ref content) => Render::fmt(content, formatter, context),
         }
+    }
+}
+
+impl<T, M> TryFromText<BlankText> for Segment<T, M>
+where
+    T: RawText,
+    M: MorphemeKind,
+{
+    type Error = MorphologyError;
+
+    fn try_from_text(text: BlankText) -> Result<Self, Self::Error> {
+        BlankSegment::try_from_text(text).map(From::from)
     }
 }
 
@@ -198,6 +210,10 @@ impl<T, M> BlankSegment<T, M>
 where
     M: MorphemeKind,
 {
+    pub const fn empty() -> Self {
+        BlankSegment::from_width_unchecked(0)
+    }
+
     const fn from_width_unchecked(width: usize) -> Self {
         BlankSegment {
             width,
@@ -214,27 +230,16 @@ where
         }
     }
 
-    pub fn from_min_width(width: usize) -> (Self, usize) {
-        let width = width
-            .checked_add(width % M::MIN_WIDTH.get())
-            .expect("overflow determining width");
-        (BlankSegment::from_width_unchecked(width), width)
+    pub fn from_min_width(width: usize) -> Self {
+        BlankSegment::from_width_unchecked(BlankText::from_min_width::<M>(width).into())
     }
 
-    pub fn from_max_width(width: usize) -> (Self, usize) {
-        let width = width.saturating_sub(width % M::MIN_WIDTH.get());
-        (BlankSegment::from_width_unchecked(width), width)
+    pub fn from_max_width(width: usize) -> Self {
+        BlankSegment::from_width_unchecked(BlankText::from_max_width::<M>(width).into())
     }
 
-    pub const fn empty() -> Self {
-        BlankSegment::from_width_unchecked(0)
-    }
-
-    pub fn from_min_width_morpheme_count(n: usize) -> (Self, usize) {
-        let width = n
-            .checked_mul(M::MIN_WIDTH.get())
-            .expect("overflow determining width");
-        (BlankSegment::from_width_unchecked(width), width)
+    pub fn from_min_width_morpheme_count(n: usize) -> Self {
+        BlankSegment::from_width_unchecked(BlankText::from_min_width_morpheme_count::<M>(n).into())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -340,9 +345,9 @@ where
     M: MorphemeKind,
 {
     fn truncate(&mut self, max: usize) -> usize {
-        let (segment, width) = BlankSegment::from_max_width(max);
+        let segment = BlankSegment::from_max_width(max);
         *self = segment;
-        width
+        segment.width()
     }
 }
 
@@ -351,6 +356,18 @@ impl<T, M> TryFromText<BlankSegment<T, M>> for BlankSegment<T, M> {
 
     fn try_from_text(segment: BlankSegment<T, M>) -> Result<Self, Self::Error> {
         Ok(segment)
+    }
+}
+
+impl<T, M> TryFromText<BlankText> for BlankSegment<T, M>
+where
+    T: RawText,
+    M: MorphemeKind,
+{
+    type Error = MorphologyError;
+
+    fn try_from_text(text: BlankText) -> Result<Self, Self::Error> {
+        BlankSegment::try_from_width(text.0)
     }
 }
 
@@ -442,14 +459,6 @@ where
             Ok(text) => text,
             _ => ContentSegment::empty(),
         }
-    }
-
-    pub fn assert<U>(text: U) -> Self
-    where
-        T: TryFrom<MoveCow<U>>,
-        U: RawText,
-    {
-        ContentSegment::try_from_text(text).expect("failed to construct block text")
     }
 
     pub const fn empty() -> Self {
