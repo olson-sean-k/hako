@@ -139,8 +139,9 @@ where
     pub fn map_style<U, F>(self, f: F) -> AnnotatedText<T, Style<U>>
     where
         F: FnOnce(S) -> U,
+        U: AnsiPrefix,
     {
-        self.map_annotation(|Style(style)| Style(f(style)))
+        self.map_annotation(move |style| style.map(f))
     }
 
     pub fn style(&self) -> &S {

@@ -1,7 +1,7 @@
-use std::fmt::{self, Debug, Display, Formatter};
+use std::fmt::{self, Arguments, Debug, Display, Formatter, Write};
 use std::marker::PhantomData;
 
-use crate::text::style::{AnsiPrefix, AnsiSuffix, Style};
+use crate::text::style::{AnsiPrefix, Style};
 
 // TODO: Though it may introduce some tricky indirection, it may be useful for `Render`
 //       implementations and `display` functions to only require style types that can differ but
@@ -68,8 +68,51 @@ where
     }
 }
 
+#[derive(Debug)]
+pub struct Monitor<W> {
+    write: W,
+    has_observed_writes: bool,
+}
+
+impl<W> Monitor<W> {
+    pub fn new(write: W) -> Self {
+        Monitor {
+            write,
+            has_observed_writes: false,
+        }
+    }
+
+    pub fn into_monitored(self) -> W {
+        self.write
+    }
+
+    pub fn has_observed_writes(&self) -> bool {
+        self.has_observed_writes
+    }
+}
+
+impl<W> Write for Monitor<W>
+where
+    W: Write,
+{
+    fn write_str(&mut self, text: &str) -> fmt::Result {
+        self.has_observed_writes = true;
+        self.write.write_str(text)
+    }
+
+    fn write_char(&mut self, c: char) -> fmt::Result {
+        self.has_observed_writes = true;
+        self.write.write_char(c)
+    }
+
+    fn write_fmt(&mut self, arguments: Arguments<'_>) -> fmt::Result {
+        self.has_observed_writes = true;
+        self.write.write_fmt(arguments)
+    }
+}
+
 // TODO: Most style types are likely inexpensive to clone, but render nodes should probably store a
-//       reference instead. Note though that it is possible for `S` to a reference type!
+//       reference instead. Note though that it is possible that `S` is a reference type!
 //       Ultimately, a `Reborrow<Target = S>` trait is likely the best way to ensure that a direct
 //       reference is always stored.
 #[derive(Clone, Debug, PartialEq)]
@@ -109,14 +152,7 @@ where
         formatter: &mut Formatter,
         text: impl Display,
     ) -> fmt::Result {
-        for node in self.nodes() {
-            node.style.as_ref().fmt(formatter)?;
-        }
-        write!(formatter, "{}", text)?;
-        if !self.nodes().is_empty() {
-            write!(formatter, "{}", AnsiSuffix)?;
-        }
-        Ok(())
+        Style::fmt_with_ansi_fence(self.nodes().iter().map(|node| &node.style), formatter, text)
     }
 }
 
