@@ -159,7 +159,7 @@ impl StrExt for str {
 
 // Though this trait has the shape of an `AsMut` conversion, it may convert `self` prior to
 // returning its reference, so it uses "to" nomenclature rather than "as".
-trait ToStringMut {
+pub trait ToStringMut {
     fn to_string_mut(&mut self) -> &mut String;
 }
 

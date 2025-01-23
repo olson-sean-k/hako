@@ -12,6 +12,34 @@ pub use Layer::{Back, Front};
 //       time to avoid excessive allocation. `Repeat::repeat(&self, n: usize) -> String` is a
 //       pretty scary interface! Don't expose something like that.
 
+pub trait ExtendExt<A>: Extend<A> + LinearGeometry {
+    fn extend_to_width<I>(&mut self, min: usize, items: I) -> usize
+    where
+        I: IntoIterator<Item = A>,
+        I::IntoIter: Clone;
+}
+
+impl<'t, T, A> ExtendExt<A> for T
+where
+    T: Extend<A> + LinearGeometry,
+    A: Morpheme<'t>,
+{
+    fn extend_to_width<I>(&mut self, min: usize, morphemes: I) -> usize
+    where
+        I: IntoIterator<Item = A>,
+        I::IntoIter: Clone,
+    {
+        let mut width = self.width();
+        self.extend(morphemes.into_iter().cycle().take_while(|morpheme| {
+            width = width
+                .checked_add(morpheme.width().into())
+                .expect("overflow extending block text");
+            width < min
+        }));
+        self.width()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct Congruent<L, R> {
     left: L,
@@ -31,41 +59,6 @@ impl<L, R> Congruent<L, R> {
             Err((left, right))
         }
     }
-}
-
-pub trait Truncate: LinearGeometry {
-    fn truncate(&mut self, max: usize) -> usize;
-}
-
-pub trait Extend: LinearGeometry {
-    fn extend<'t, I>(&'t mut self, morphemes: I) -> usize
-    where
-        I: IntoIterator<Item = <Self::BlockText as BlockText>::Morpheme<'t>>;
-
-    fn fill<'t, I>(&'t mut self, min: usize, morphemes: I) -> usize
-    where
-        I: IntoIterator<Item = <Self::BlockText as BlockText>::Morpheme<'t>>,
-        I::IntoIter: Clone,
-    {
-        let mut width = self.width();
-        self.extend(morphemes.into_iter().cycle().take_while(|morpheme| {
-            width = width
-                .checked_add(morpheme.width().into())
-                .expect("overflow extending text");
-            width < min
-        }))
-    }
-}
-
-// NOTE: This is similar to `Extend`, but is closed over text types: it accepts two `T`s and
-//       outputs their concatenation (also a `T`). This is useful, as types like `Line` can support
-//       the composition of text types using `&str` representations (because `Line` can append
-//       `Segment`s).
-//
-//       Also, unlike `Extend`, this trait may avoid copies, as `Extend` requires reading and
-//       copying morphemes from the RHS. `Append` may move or consolidate buffers.
-pub trait Append: LinearGeometry {
-    fn append(self, rhs: Self) -> Self;
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

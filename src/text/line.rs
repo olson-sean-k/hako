@@ -12,8 +12,8 @@ use crate::text::render::{AsDisplay, Render, RenderContext};
 use crate::text::segment::{BlankSegment, ContentSegment, Segment, SegmentFor};
 use crate::text::style::AnsiPrefix;
 use crate::text::{
-    ops, BlankText, BlockText, BlockTextProjection, Indexed, MorphologyError, RawText, StrExt as _,
-    TryFromText,
+    BlankText, BlockText, BlockTextProjection, Indexed, MorphologyError, RawText, StrExt as _,
+    ToStringMut, TryFromText,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -41,6 +41,15 @@ impl<T> Line<T> {
         Line {
             segments: Vec::new(),
         }
+    }
+
+    pub fn append(&mut self, line: &mut Self) {
+        self.segments.append(&mut line.segments);
+    }
+
+    pub fn into_appended(mut self, mut line: Self) -> Self {
+        self.append(&mut line);
+        self
     }
 }
 
@@ -101,17 +110,19 @@ where
         self.segments.push(segment.into());
     }
 
-    pub fn concatenate(self) -> Line<Segment<<T as BlockTextProjection>::RawText, M>>
+    pub fn project_and_append_segments(
+        self,
+    ) -> Line<Segment<<T as BlockTextProjection>::RawText, M>>
     where
-        Segment<<T as BlockTextProjection>::RawText, M>: ops::Append,
+        T::RawText: From<String> + ToStringMut,
     {
         Line {
             segments: self
                 .segments
                 .into_iter()
                 .map(BlockTextProjection::into_block_text)
-                .reduce(ops::Append::append)
-                .map(|concatenated| vec![concatenated])
+                .reduce(Segment::into_appended)
+                .map(|appended| vec![appended])
                 .unwrap_or_else(Vec::new),
         }
     }
@@ -178,10 +189,11 @@ where
     }
 }
 
-impl<T, A> Line<AnnotatedText<T, A>>
+impl<T, M, A> Line<AnnotatedText<Segment<T, M>, A>>
 where
-    T: ops::Append,
-    A: Eq,
+    T: From<String> + RawText + ToStringMut,
+    M: MorphemeKind,
+    A: PartialEq,
 {
     pub fn coalesce(self) -> Self {
         Line {
@@ -190,7 +202,7 @@ where
                 .into_iter()
                 .coalesce(|previous, next| {
                     if previous.annotation == next.annotation {
-                        Ok(previous.map_text(move |text| ops::Append::append(text, next.text)))
+                        Ok(previous.map_text(move |text| Segment::into_appended(text, next.text)))
                     }
                     else {
                         Err((previous, next))
@@ -234,6 +246,15 @@ impl<T> Default for Line<T> {
         Line {
             segments: Default::default(),
         }
+    }
+}
+
+impl<T> Extend<T> for Line<T> {
+    fn extend<I>(&mut self, segments: I)
+    where
+        I: IntoIterator<Item = T>,
+    {
+        self.segments.extend(segments);
     }
 }
 

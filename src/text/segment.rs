@@ -5,6 +5,7 @@ use std::convert::Infallible;
 use std::fmt::{self, Display, Formatter};
 use std::iter;
 use std::marker::PhantomData;
+use std::mem;
 
 use crate::cow::MoveCow;
 use crate::text::geometry::LinearGeometry;
@@ -13,7 +14,7 @@ use crate::text::morphology::{FlexKind, Grapheme, Morpheme, MorphemeFor, Morphem
 use crate::text::render::{AsDisplay, FmtWith, Render, RenderContext};
 use crate::text::style::AnsiPrefix;
 use crate::text::{
-    ops, BlankText, BlockText, BlockTextProjection, Indexed, MorphologyError, RawText, StrExt as _,
+    BlankText, BlockText, BlockTextProjection, Indexed, MorphologyError, RawText, StrExt as _,
     ToStringMut, TryFromText,
 };
 
@@ -57,6 +58,57 @@ where
     }
 }
 
+impl<T, M> Segment<T, M>
+where
+    T: RawText + ToStringMut,
+    M: MorphemeKind,
+{
+    pub fn truncate(&mut self, max: usize) -> usize {
+        match self.modal {
+            Blank(ref mut blank) => blank.truncate(max),
+            Content(ref mut content) => content.truncate(max),
+        }
+    }
+}
+
+impl<T, M> Segment<T, M>
+where
+    T: From<String> + RawText + ToStringMut,
+    M: MorphemeKind,
+{
+    pub fn append(&mut self, segment: &Self) {
+        match (&mut self.modal, &segment.modal) {
+            (Blank(ref mut lhs), Blank(ref rhs)) => lhs.append(rhs),
+            (Content(ref mut lhs), Content(ref rhs)) => lhs.append(rhs),
+            (Blank(_), Content(ref rhs)) => self.get_or_into_content().append(rhs),
+            (Content(ref mut lhs), Blank(ref rhs)) => lhs.text.to_string_mut().extend(
+                rhs.graphemes()
+                    .map(Indexed::into_text)
+                    .map(Grapheme::into_string),
+            ),
+        };
+    }
+
+    pub fn into_appended(mut self, segment: Self) -> Self {
+        self.append(&segment);
+        self
+    }
+
+    fn get_or_into_content(&mut self) -> &mut ContentSegment<T, M> {
+        match self.modal {
+            Blank(ref mut blank) => {
+                let content = ContentSegment::from(mem::take(blank));
+                self.modal = Content(content);
+                match self.modal {
+                    Content(ref mut content) => content,
+                    _ => unreachable!(),
+                }
+            }
+            Content(ref mut content) => content,
+        }
+    }
+}
+
 impl<'t, M> Segment<Cow<'t, str>, M>
 where
     M: MorphemeKind,
@@ -65,21 +117,6 @@ where
         match self.modal {
             Blank(blank) => blank.into_owned().into(),
             Content(content) => content.into_owned().into(),
-        }
-    }
-}
-
-impl<T, M> ops::Append for Segment<T, M>
-where
-    T: From<String> + RawText + ToStringMut,
-    M: MorphemeKind,
-{
-    fn append(self, rhs: Self) -> Self {
-        match (self.modal, rhs.modal) {
-            (Blank(lhs), Blank(rhs)) => lhs.append(rhs).into(),
-            (Content(lhs), Content(rhs)) => lhs.append(rhs).into(),
-            (Blank(lhs), Content(rhs)) => ContentSegment::from(lhs).append(rhs).into(),
-            (Content(lhs), Blank(rhs)) => lhs.append(ContentSegment::from(rhs)).into(),
         }
     }
 }
@@ -110,6 +147,21 @@ where
             .as_ref()
             .map_blank(BlankSegment::morphemes)
             .map_content(ContentSegment::morphemes)
+    }
+}
+
+impl<'t, T, M, A> Extend<A> for Segment<T, M>
+where
+    ContentSegment<T, M>: BlockText<Morpheme<'t> = A>,
+    T: 't + From<String> + RawText + ToStringMut,
+    M: MorphemeKind,
+    A: Morpheme<'t>,
+{
+    fn extend<I>(&mut self, morphemes: I)
+    where
+        I: IntoIterator<Item = A>,
+    {
+        self.get_or_into_content().extend(morphemes)
     }
 }
 
@@ -198,10 +250,7 @@ pub struct BlankSegment<T = String, M = FlexKind> {
     _phantom: PhantomData<fn() -> (T, M)>,
 }
 
-impl<T, M> BlankSegment<T, M>
-where
-    M: MorphemeKind,
-{
+impl<T, M> BlankSegment<T, M> {
     pub const fn empty() -> Self {
         BlankSegment::from_width_unchecked(0)
     }
@@ -213,6 +262,15 @@ where
         }
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.width == 0
+    }
+}
+
+impl<T, M> BlankSegment<T, M>
+where
+    M: MorphemeKind,
+{
     pub const fn try_from_width(width: usize) -> Result<Self, MorphologyError> {
         if width % M::MIN_WIDTH.get() == 0 {
             Ok(BlankSegment::from_width_unchecked(width))
@@ -234,8 +292,16 @@ where
         BlankSegment::from_width_unchecked(BlankText::from_min_width_morpheme_count::<M>(n).into())
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.width == 0
+    pub fn append(&mut self, segment: &Self) {
+        self.width = self
+            .width
+            .checked_add(segment.width)
+            .expect("overflow appending blank segment");
+    }
+
+    pub fn into_appended(mut self, segment: Self) -> Self {
+        self.append(&segment);
+        self
     }
 }
 
@@ -250,6 +316,12 @@ where
             .map(Morpheme::into_string)
             .join("")
     }
+
+    pub fn truncate(&mut self, max: usize) -> usize {
+        let segment = BlankSegment::from_max_width(max);
+        *self = segment;
+        segment.width()
+    }
 }
 
 impl<'t, M> BlankSegment<Cow<'t, str>, M>
@@ -258,20 +330,6 @@ where
 {
     pub fn into_owned(self) -> BlankSegment<Cow<'static, str>, M> {
         BlankSegment::from_width_unchecked(self.width)
-    }
-}
-
-impl<T, M> ops::Append for BlankSegment<T, M>
-where
-    T: RawText,
-    M: MorphemeKind,
-{
-    fn append(self, rhs: Self) -> Self {
-        BlankSegment::from_width_unchecked(
-            self.width
-                .checked_add(rhs.width)
-                .expect("overflow appending text"),
-        )
     }
 }
 
@@ -302,6 +360,12 @@ where
     }
 }
 
+impl<T, M> Default for BlankSegment<T, M> {
+    fn default() -> Self {
+        BlankSegment::empty()
+    }
+}
+
 impl<T, M> LinearGeometry for BlankSegment<T, M>
 where
     T: RawText,
@@ -328,18 +392,6 @@ where
                 Ok(())
             }),
         )
-    }
-}
-
-impl<T, M> ops::Truncate for BlankSegment<T, M>
-where
-    T: RawText,
-    M: MorphemeKind,
-{
-    fn truncate(&mut self, max: usize) -> usize {
-        let segment = BlankSegment::from_max_width(max);
-        *self = segment;
-        segment.width()
     }
 }
 
@@ -484,6 +536,44 @@ where
     }
 }
 
+impl<T, M> ContentSegment<T, M>
+where
+    T: RawText + ToStringMut,
+    M: MorphemeKind,
+{
+    pub fn append(&mut self, segment: &Self) {
+        self.text.to_string_mut().push_str(segment.as_str());
+    }
+
+    pub fn into_appended(mut self, segment: Self) -> Self {
+        self.append(&segment);
+        self
+    }
+
+    pub fn truncate(&mut self, max: usize) -> usize {
+        let mut width = 0usize;
+        // This iterator expression cannot use `find`, because it borrows the iterator, which
+        // prevents the mutable borrow in the branch.
+        if let Some(len) = self
+            .text
+            .as_ref()
+            .graphemes()
+            .skip_while(|grapheme| {
+                width = width
+                    .checked_add(grapheme.text.width())
+                    .expect("overflow truncating content segment");
+                width <= max
+            })
+            .take(1)
+            .last()
+            .map(|grapheme| grapheme.index)
+        {
+            self.text.to_string_mut().truncate(len);
+        }
+        self.width()
+    }
+}
+
 impl<'t, M> ContentSegment<Cow<'t, str>, M>
 where
     M: MorphemeKind,
@@ -491,17 +581,6 @@ where
     pub fn into_owned(self) -> ContentSegment<Cow<'static, str>, M> {
         let ContentSegment { text, .. } = self;
         ContentSegment::from_raw_text_unchecked(text.into_owned().into())
-    }
-}
-
-impl<T, M> ops::Append for ContentSegment<T, M>
-where
-    T: RawText + ToStringMut,
-    M: MorphemeKind,
-{
-    fn append(mut self, rhs: Self) -> Self {
-        self.text.to_string_mut().push_str(rhs.as_str());
-        self
     }
 }
 
@@ -531,19 +610,20 @@ where
     }
 }
 
-impl<T, M> ops::Extend for ContentSegment<T, M>
+impl<'t, T, M, A> Extend<A> for ContentSegment<T, M>
 where
-    T: RawText + ToStringMut,
+    Self: BlockText<Morpheme<'t> = A>,
+    T: 't + RawText + ToStringMut,
     M: MorphemeKind,
+    A: Morpheme<'t>,
 {
-    fn extend<'t, I>(&'t mut self, morphemes: I) -> usize
+    fn extend<I>(&mut self, morphemes: I)
     where
-        I: IntoIterator<Item = <Self::BlockText as BlockText>::Morpheme<'t>>,
+        I: IntoIterator<Item = A>,
     {
         self.text
             .to_string_mut()
             .extend(morphemes.into_iter().map(Morpheme::into_string));
-        self.width()
     }
 }
 
@@ -575,35 +655,6 @@ where
 {
     fn fmt(&self, formatter: &mut Formatter, context: &mut RenderContext<S>) -> fmt::Result {
         context.fmt_with_ansi_fence(formatter, self.as_str())
-    }
-}
-
-impl<T, M> ops::Truncate for ContentSegment<T, M>
-where
-    T: RawText + ToStringMut,
-    M: MorphemeKind,
-{
-    fn truncate(&mut self, max: usize) -> usize {
-        let mut width = 0usize;
-        // This iterator expression cannot use `find`, because it borrows the iterator, which
-        // prevents the mutable borrow in the branch.
-        if let Some(len) = self
-            .text
-            .as_ref()
-            .graphemes()
-            .skip_while(|grapheme| {
-                width = width
-                    .checked_add(grapheme.text.width())
-                    .expect("overflow truncating text");
-                width <= max
-            })
-            .take(1)
-            .last()
-            .map(|grapheme| grapheme.index)
-        {
-            self.text.to_string_mut().truncate(len);
-        }
-        self.width()
     }
 }
 
