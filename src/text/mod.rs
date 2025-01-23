@@ -568,7 +568,7 @@ mod tests {
 
     #[test]
     fn line_from_split_text() {
-        let lines = Line::<Segment>::try_from_raw_text_or_split("text\ntext").unwrap();
+        let lines = Line::<Segment>::try_from_split_raw_text("text\ntext").unwrap();
         assert_eq!(lines.len(), 2);
         for line in lines {
             assert_eq!(line.to_string(), "text");

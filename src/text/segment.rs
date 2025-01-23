@@ -437,8 +437,31 @@ impl<T, M> ContentSegment<T, M> {
 impl<T, M> ContentSegment<T, M>
 where
     T: RawText,
+{
+    pub const fn empty() -> Self {
+        ContentSegment {
+            text: T::EMPTY,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<T, M> ContentSegment<T, M>
+where
+    T: RawText,
     M: MorphemeKind,
 {
+    pub fn from_raw_text_or_empty<U>(text: U) -> Self
+    where
+        T: TryFrom<MoveCow<U>>,
+        U: RawText,
+    {
+        match ContentSegment::try_from_text(text) {
+            Ok(text) => text,
+            _ => ContentSegment::empty(),
+        }
+    }
+
     pub fn try_from_raw_text<U>(text: U) -> Result<Self, MorphologyError>
     where
         T: RawText + TryFrom<MoveCow<U>>,
@@ -462,7 +485,7 @@ where
         }
     }
 
-    pub fn try_from_raw_text_or_joined<U>(text: U) -> Result<Self, MorphologyError>
+    pub fn try_from_joined_raw_text<U>(text: U) -> Result<Self, MorphologyError>
     where
         T: TryFrom<MoveCow<String>> + TryFrom<MoveCow<U>>,
         U: RawText,
@@ -479,7 +502,7 @@ where
     }
 
     // TODO: Remove this. This is probably better suited to `Line`, not `Segment`.
-    pub fn try_from_raw_text_or_split<U>(text: U) -> Result<Vec<Self>, MorphologyError>
+    pub fn try_from_split_raw_text<U>(text: U) -> Result<Vec<Self>, MorphologyError>
     where
         // TODO: This requires that split text is copied into a `String`, but may not if
         //       `split_at_ascii_line_breaks` were implemented by `U` and returned `MoveCow`
@@ -492,24 +515,6 @@ where
             .map(String::from)
             .map(ContentSegment::try_from_text)
             .collect()
-    }
-
-    pub fn from_raw_text_or_empty<U>(text: U) -> Self
-    where
-        T: TryFrom<MoveCow<U>>,
-        U: RawText,
-    {
-        match ContentSegment::try_from_text(text) {
-            Ok(text) => text,
-            _ => ContentSegment::empty(),
-        }
-    }
-
-    pub const fn empty() -> Self {
-        ContentSegment {
-            text: T::EMPTY,
-            _phantom: PhantomData,
-        }
     }
 
     pub fn try_map_raw_text<U, F>(self, f: F) -> Result<ContentSegment<U, M>, MorphologyError>

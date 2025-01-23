@@ -58,23 +58,38 @@ where
     T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>,
     M: MorphemeKind,
 {
-    pub fn try_from_raw_text_or_joined<U>(text: U) -> Result<Self, MorphologyError>
+    pub fn from_raw_text_or_empty<U>(text: U) -> Self
     where
         T: From<Segment<T::RawText, M>>,
         T::RawText: TryFrom<MoveCow<String>> + TryFrom<MoveCow<U>>,
         U: RawText,
     {
-        ContentSegment::try_from_raw_text_or_joined(text)
+        let segment = ContentSegment::from_raw_text_or_empty(text);
+        if segment.is_empty() {
+            Line::empty()
+        }
+        else {
+            Line::from(vec![Segment::from(segment).into()])
+        }
+    }
+
+    pub fn try_from_joined_raw_text<U>(text: U) -> Result<Self, MorphologyError>
+    where
+        T: From<Segment<T::RawText, M>>,
+        T::RawText: TryFrom<MoveCow<String>> + TryFrom<MoveCow<U>>,
+        U: RawText,
+    {
+        ContentSegment::try_from_joined_raw_text(text)
             .map(Segment::from)
             .map(|segment| Line::from(vec![segment.into()]))
     }
 
-    pub fn try_from_raw_text_or_split<U>(text: U) -> Result<Vec<Self>, T::Error>
+    pub fn try_from_split_raw_text<U>(text: U) -> Result<Vec<Self>, T::Error>
     where
         T: TryFromText<String>,
         U: RawText,
     {
-        // This is not implemented via `Segment::try_from_raw_text_or_split` to avoid an additional
+        // This is not implemented via `Segment::try_from_split_raw_text` to avoid an additional
         // allocation.
         text.as_ref()
             .split_at_ascii_line_breaks()
@@ -255,6 +270,30 @@ impl<T> Extend<T> for Line<T> {
         I: IntoIterator<Item = T>,
     {
         self.segments.extend(segments);
+    }
+}
+
+impl<T, M> From<BlankSegment<T, M>> for Line<Segment<T, M>> {
+    fn from(segment: BlankSegment<T, M>) -> Self {
+        Line {
+            segments: vec![segment.into()],
+        }
+    }
+}
+
+impl<T, M> From<ContentSegment<T, M>> for Line<Segment<T, M>> {
+    fn from(segment: ContentSegment<T, M>) -> Self {
+        Line {
+            segments: vec![segment.into()],
+        }
+    }
+}
+
+impl<T, M> From<Segment<T, M>> for Line<Segment<T, M>> {
+    fn from(segment: Segment<T, M>) -> Self {
+        Line {
+            segments: vec![segment],
+        }
     }
 }
 
