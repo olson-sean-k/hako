@@ -43,13 +43,13 @@ impl<T> Line<T> {
         }
     }
 
-    pub fn append(&mut self, line: &mut Self) {
-        self.segments.append(&mut line.segments);
+    pub fn appended(mut front: Self, mut back: Self) -> Self {
+        front.append(&mut back);
+        front
     }
 
-    pub fn into_appended(mut self, mut line: Self) -> Self {
-        self.append(&mut line);
-        self
+    pub fn append(&mut self, line: &mut Self) {
+        self.segments.append(&mut line.segments);
     }
 
     pub fn has_segments(&self) -> bool {
@@ -140,7 +140,7 @@ where
                 .segments
                 .into_iter()
                 .map(BlockTextProjection::into_block_text)
-                .reduce(Segment::into_appended)
+                .reduce(Segment::appended)
                 .map(|appended| vec![appended])
                 .unwrap_or_else(Vec::new),
         }
@@ -217,7 +217,7 @@ where
                 .into_iter()
                 .coalesce(|previous, next| {
                     if previous.annotation == next.annotation {
-                        Ok(previous.map_text(move |text| Segment::into_appended(text, next.text)))
+                        Ok(previous.map_text(move |text| Segment::appended(text, next.text)))
                     }
                     else {
                         Err((previous, next))

@@ -76,6 +76,11 @@ where
     T: From<String> + RawText + ToStringMut,
     M: MorphemeKind,
 {
+    pub fn appended(mut front: Self, back: Self) -> Self {
+        front.append(&back);
+        front
+    }
+
     pub fn append(&mut self, segment: &Self) {
         match (&mut self.modal, &segment.modal) {
             (Blank(ref mut lhs), Blank(ref rhs)) => lhs.append(rhs),
@@ -87,11 +92,6 @@ where
                     .map(Grapheme::into_string),
             ),
         };
-    }
-
-    pub fn into_appended(mut self, segment: Self) -> Self {
-        self.append(&segment);
-        self
     }
 
     fn get_or_into_content(&mut self) -> &mut ContentSegment<T, M> {
@@ -271,8 +271,9 @@ impl<T, M> BlankSegment<T, M>
 where
     M: MorphemeKind,
 {
-    pub fn try_from_width(width: usize) -> Result<Self, M::Error> {
-        M::congruence(width).map(BlankSegment::from_width_unchecked)
+    pub fn appended(mut front: Self, back: Self) -> Self {
+        front.append(&back);
+        front
     }
 
     pub fn from_min_width(width: usize) -> Self {
@@ -287,16 +288,15 @@ where
         BlankSegment::from_width_unchecked(BlankText::from_min_width_morpheme_count::<M>(n).into())
     }
 
+    pub fn try_from_width(width: usize) -> Result<Self, M::Error> {
+        M::congruence(width).map(BlankSegment::from_width_unchecked)
+    }
+
     pub fn append(&mut self, segment: &Self) {
         self.width = self
             .width
             .checked_add(segment.width)
             .expect("overflow appending blank segment");
-    }
-
-    pub fn into_appended(mut self, segment: Self) -> Self {
-        self.append(&segment);
-        self
     }
 }
 
@@ -541,13 +541,13 @@ where
     T: RawText + ToStringMut,
     M: MorphemeKind,
 {
-    pub fn append(&mut self, segment: &Self) {
-        self.text.to_string_mut().push_str(segment.as_str());
+    pub fn appended(mut front: Self, back: Self) -> Self {
+        front.append(&back);
+        front
     }
 
-    pub fn into_appended(mut self, segment: Self) -> Self {
-        self.append(&segment);
-        self
+    pub fn append(&mut self, segment: &Self) {
+        self.text.to_string_mut().push_str(segment.as_str());
     }
 
     pub fn truncate(&mut self, max: usize) -> usize {
