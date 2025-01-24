@@ -22,7 +22,7 @@ mod sealed {
 }
 
 // TODO: Remove this in favor of `crate::render::text::Render`.
-pub trait RenderContextless {
+pub trait Render {
     fn render(&self) -> Cow<'_, str>;
 
     fn render_into(&self, target: &mut impl Write) -> io::Result<()> {
@@ -30,13 +30,13 @@ pub trait RenderContextless {
     }
 }
 
-impl<'t> RenderContextless for Cow<'t, str> {
+impl<'t> Render for Cow<'t, str> {
     fn render(&self) -> Cow<'_, str> {
         self.clone()
     }
 }
 
-impl RenderContextless for String {
+impl Render for String {
     fn render(&self) -> Cow<'_, str> {
         self.into()
     }

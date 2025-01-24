@@ -46,7 +46,7 @@ pub struct AnnotatedText<T, A = ()> {
 }
 
 impl<T, A> AnnotatedText<T, A> {
-    pub const fn annotate(text: T, annotation: A) -> Self {
+    pub const fn annotated(text: T, annotation: A) -> Self {
         AnnotatedText { text, annotation }
     }
 

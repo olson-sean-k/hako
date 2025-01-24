@@ -4,7 +4,7 @@ use std::io::{self, Write};
 
 use crate::align::{typed, valued};
 use crate::content::{Congruent, Content, ContentSlice as _, Grapheme, Layer, Style, Styled};
-use crate::RenderContextless;
+use crate::Render;
 
 // TODO: Here or in a higher-level crate, provide a `Block::from_natural_text` API that, among
 //       other things, supports line wrapping, bi-directional text, and other formatting features
@@ -1028,7 +1028,7 @@ where
     }
 }
 
-impl<C> RenderContextless for Block<C>
+impl<C> Render for Block<C>
 where
     C: Content,
 {
@@ -1081,7 +1081,7 @@ mod tests {
 
     use crate::block::{Block, Fill};
     use crate::content::{Style as Transform, Styled};
-    use crate::RenderContextless;
+    use crate::Render;
 
     #[test]
     fn block_empty() {
