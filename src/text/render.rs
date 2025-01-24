@@ -1,6 +1,7 @@
 use std::fmt::{self, Arguments, Debug, Display, Formatter, Write};
 use std::marker::PhantomData;
 
+use crate::env::{Detected, Encoding, Query, StyleEncoding, TextEncoding};
 use crate::text::style::{AnsiPrefix, Style};
 
 // TODO: Though it may introduce some tricky indirection, it may be useful for `Render`
@@ -21,27 +22,42 @@ where
 }
 
 #[derive(Debug)]
-pub(crate) struct AsDisplay<'r, T, S = ()> {
-    text: &'r T,
+pub struct DisplayProxy<'t, T, S = ()> {
+    text: &'t T,
     phantom: PhantomData<fn() -> S>,
 }
 
-impl<'r, T, S> From<&'r T> for AsDisplay<'r, T, S> {
-    fn from(text: &'r T) -> Self {
-        AsDisplay {
+impl<'t, T, S> DisplayProxy<'t, T, S> {
+    pub(crate) fn from_text(text: &'t T) -> Self {
+        DisplayProxy {
             text,
             phantom: PhantomData,
         }
     }
 }
 
-impl<'r, T, S> Display for AsDisplay<'r, T, S>
+impl<'t, T, S> DisplayProxy<'t, T, S>
 where
     T: Render<S>,
+    S: 't + Clone,
 {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        let mut context = RenderContext::default();
-        self.text.fmt(formatter, &mut context)
+    pub fn default(self) -> impl 't + Display {
+        self.with(RenderContext::default())
+    }
+
+    pub fn detected<Q>(self, query: impl Query<Q>) -> impl 't + Display
+    where
+        RenderContext<S>: Detected<Q>,
+        Q: 't + Copy,
+    {
+        self.with(RenderContext::detected(query))
+    }
+
+    pub fn with(self, context: RenderContext<S>) -> impl 't + Display {
+        FmtWith(move |formatter| {
+            let mut context = context.clone();
+            self.text.fmt(formatter, &mut context)
+        })
     }
 }
 
@@ -91,6 +107,10 @@ impl<W> Monitor<W> {
     }
 }
 
+// TODO: `has_observed_writes` observes whether or not a write function has been called, but not if
+//       anything has actually been written (i.e., it does not consider empty inputs). Test this
+//       and determine the best behavior here. Note that it may be difficult to examine `Arguments`
+//       in `write_fmt`.
 impl<W> Write for Monitor<W>
 where
     W: Write,
@@ -120,8 +140,9 @@ pub struct RenderNode<S> {
     pub style: Style<S>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct RenderContext<S> {
+    encoding: Encoding,
     nodes: Vec<RenderNode<S>>,
 }
 
@@ -147,19 +168,48 @@ impl<S> RenderContext<S>
 where
     S: AnsiPrefix,
 {
+    // TODO: Convert Unicode text to ASCII via `to_ascii_lossy` (or, more likely, a similar
+    //       conversion over an iterator of graphemes that does not require allocation) when
+    //       configured for ASCII output and given Unicode text input.
     pub fn fmt_with_ansi_fence(
         &self,
         formatter: &mut Formatter,
         text: impl Display,
     ) -> fmt::Result {
-        Style::fmt_with_ansi_fence(self.nodes().iter().map(|node| &node.style), formatter, text)
+        Style::fmt_with_ansi_fence(
+            self.nodes()
+                .iter()
+                .map(|node| &node.style)
+                .filter(|style| style.as_ref().encoding().is_in(&self.encoding.style)),
+            formatter,
+            text,
+        )
     }
 }
 
-impl<T> Default for RenderContext<T> {
+impl<S> Default for RenderContext<S> {
     fn default() -> Self {
         RenderContext {
+            encoding: Encoding {
+                style: StyleEncoding::NONE,
+                text: TextEncoding::ASCII,
+            },
             nodes: Vec::default(),
+        }
+    }
+}
+
+impl<S> Detected<Encoding> for RenderContext<S> {
+    fn detected(encoding: impl Query<Encoding>) -> Self {
+        encoding.query().into()
+    }
+}
+
+impl<S> From<Encoding> for RenderContext<S> {
+    fn from(encoding: Encoding) -> Self {
+        RenderContext {
+            encoding,
+            ..Default::default()
         }
     }
 }

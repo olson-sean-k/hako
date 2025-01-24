@@ -1,7 +1,7 @@
-use std::fmt::{self, Debug, Display, Formatter};
+use std::fmt::{self, Debug, Formatter};
 
 use crate::text::geometry::LinearGeometry;
-use crate::text::render::{AsDisplay, Render, RenderContext, RenderNode};
+use crate::text::render::{DisplayProxy, Render, RenderContext, RenderNode};
 use crate::text::style::{AnsiPrefix, Style};
 use crate::text::{BlockText, BlockTextProjection, TryFromText};
 
@@ -116,12 +116,12 @@ impl<T, A> AnnotatedText<T, Attachment<A>> {
         &self.annotation.0
     }
 
-    pub fn display<'d, S>(&'d self) -> impl 'd + Display
+    pub fn display<S>(&self) -> DisplayProxy<'_, Self, S>
     where
         Self: Render<S>,
-        S: 'd + AnsiPrefix,
+        S: AnsiPrefix,
     {
-        AsDisplay::<_, S>::from(self)
+        DisplayProxy::from_text(self)
     }
 }
 
@@ -148,11 +148,11 @@ where
         self.annotation.as_ref()
     }
 
-    pub fn display(&self) -> impl '_ + Display
+    pub fn display(&self) -> DisplayProxy<'_, Self, S>
     where
         Self: Render<S>,
     {
-        AsDisplay::from(self)
+        DisplayProxy::from_text(self)
     }
 }
 

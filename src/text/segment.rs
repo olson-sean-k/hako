@@ -2,7 +2,7 @@ use derive_where::derive_where;
 use itertools::Itertools;
 use std::borrow::Cow;
 use std::convert::Infallible;
-use std::fmt::{self, Display, Formatter};
+use std::fmt::{self, Formatter};
 use std::iter;
 use std::marker::PhantomData;
 use std::mem;
@@ -11,7 +11,7 @@ use crate::cow::MoveCow;
 use crate::text::geometry::LinearGeometry;
 use crate::text::modal::ModalText;
 use crate::text::morphology::{FlexKind, Grapheme, Morpheme, MorphemeFor, MorphemeKind};
-use crate::text::render::{AsDisplay, FmtWith, Render, RenderContext};
+use crate::text::render::{DisplayProxy, FmtWith, Render, RenderContext};
 use crate::text::style::AnsiPrefix;
 use crate::text::{
     BlankText, BlockText, BlockTextProjection, Indexed, MorphologyError, RawText, StrExt as _,
@@ -39,8 +39,8 @@ where
         }
     }
 
-    pub fn display(&self) -> impl '_ + Display {
-        AsDisplay::<_, ()>::from(self)
+    pub fn display(&self) -> DisplayProxy<'_, Self, ()> {
+        DisplayProxy::from_text(self)
     }
 
     pub fn is_blank(&self) -> bool {

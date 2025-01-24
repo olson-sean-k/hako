@@ -4,6 +4,7 @@ pub mod align;
 pub mod block;
 pub mod content;
 pub mod cow;
+pub mod env;
 pub mod text;
 
 use std::borrow::Cow;

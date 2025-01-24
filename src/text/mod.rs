@@ -13,10 +13,12 @@ use itertools::Itertools;
 use std::borrow::Cow;
 use std::convert::Infallible;
 use std::fmt::Debug;
-use std::ops::Range;
+use std::iter;
+use std::ops::{Bound, Range, RangeBounds};
 use std::slice::SliceIndex;
 
 use crate::cow::{IntoWritten, MoveCow};
+use crate::env::TextEncoding;
 use crate::text::morphology::{Grapheme, Morpheme, MorphemeKind};
 
 pub use crate::text::line::{Line, LineIndex};
@@ -77,30 +79,65 @@ impl From<Infallible> for BoundaryError {
     }
 }
 
+pub trait U8Ext: Copy {
+    fn is_utf8_char_boundary(self) -> bool;
+}
+
+impl U8Ext for u8 {
+    fn is_utf8_char_boundary(self) -> bool {
+        (self as i8) >= -0x40
+    }
+}
+
 pub trait StrExt {
+    fn to_ascii_lossy(&self) -> Cow<'_, str>;
+
+    fn split_at_ascii_line_breaks(&self) -> impl '_ + Iterator<Item = &'_ str>;
+
+    fn lower_char_boundary(&self, index: usize) -> usize;
+
+    fn upper_char_boundary(&self, index: usize) -> Option<usize>;
+
+    fn get_or_truncate(&self, range: impl RangeBounds<usize>) -> &Self;
+
+    fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<usize, Grapheme<'_>>>;
+
+    fn encoding(&self) -> TextEncoding;
+
+    fn width(&self) -> usize;
+
     fn has_ascii_line_breaks(&self) -> bool;
 
     // Control and layout points are CC, CF, ZL, and ZP. These general categories affect the flow
     // and layout of text and the behavior of output targets like TTYs and printers.
     fn has_control_or_layout_points(&self) -> bool;
-
-    fn split_at_ascii_line_breaks(&self) -> impl '_ + Iterator<Item = &'_ str>;
-
-    fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<usize, Grapheme<'_>>>;
-
-    fn width(&self) -> usize;
 }
 
 impl StrExt for str {
-    fn has_ascii_line_breaks(&self) -> bool {
-        // Detect any and all occurences of CR and LF. Note that both CR and LF are considered a
-        // line break even when not adjacent to another line breaking control character (i.e., a
-        // lone CR).
-        self.as_bytes().iter().copied().any(ucs_ascii_is_cr_lf)
-    }
-
-    fn has_control_or_layout_points(&self) -> bool {
-        self.chars().any(self::uax44_point_is_cc_cf_zl_zp)
+    fn to_ascii_lossy(&self) -> Cow<'_, str> {
+        if self.is_ascii() {
+            self.into()
+        }
+        else {
+            let ascii: String = self
+                .graphemes()
+                .map(Indexed::into_text)
+                .map(Grapheme::into_string)
+                .map(|grapheme| -> Cow<'_, str> {
+                    if grapheme.is_ascii() {
+                        grapheme.into()
+                    }
+                    else {
+                        // TODO: Allow this to be configured via a robust ASCII character type.
+                        iter::repeat('?')
+                            .take(grapheme.width())
+                            .collect::<String>()
+                            .into()
+                    }
+                })
+                .collect();
+            ascii.into()
+        }
     }
 
     // Splits over unpaired CR (unlike `str::lines`). Discards line breaking control characters.
@@ -148,12 +185,83 @@ impl StrExt for str {
             .map(|range| self.get(range).expect("invalid UTF-8 slice"))
     }
 
+    fn lower_char_boundary(&self, index: usize) -> usize {
+        if index >= self.len() {
+            self.len()
+        }
+        else {
+            let lower = index.saturating_sub(3);
+            lower
+                + self.as_bytes()[lower..=index]
+                    .iter()
+                    .rposition(|byte| byte.is_utf8_char_boundary())
+                    .unwrap()
+        }
+    }
+
+    fn upper_char_boundary(&self, index: usize) -> Option<usize> {
+        if index > self.len() {
+            None
+        }
+        else {
+            let upper = Ord::min(index + 4, self.len());
+            Some(
+                self.as_bytes()[index..upper]
+                    .iter()
+                    .position(|byte| byte.is_utf8_char_boundary())
+                    .map_or(upper, |position| position + index),
+            )
+        }
+    }
+
+    fn get_or_truncate(&self, range: impl RangeBounds<usize>) -> &Self {
+        use Bound::{Excluded, Included, Unbounded};
+
+        // TODO: This code assumes that the start and end of the range are in ascending order (that
+        //       is, start is less than end). If a reversed range is given, then the boundary
+        //       search proceeds in the opposite direction w.r.t. bounded terminals.
+        let start = self.lower_char_boundary(match range.start_bound() {
+            Excluded(start) => start.saturating_add(1),
+            Included(start) => *start,
+            Unbounded => 0,
+        });
+        let end = match self.upper_char_boundary(match range.end_bound() {
+            Excluded(end) => *end,
+            Included(end) => end.saturating_add(1),
+            Unbounded => self.len(),
+        }) {
+            Some(end) => end,
+            _ => self.len(),
+        };
+        self.get(start..end).unwrap()
+    }
+
     fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<usize, Grapheme<'_>>> {
         self::uax29_text_grapheme_indices(self)
     }
 
+    fn encoding(&self) -> TextEncoding {
+        if self.is_ascii() {
+            TextEncoding::ASCII
+        }
+        else {
+            TextEncoding::UNICODE
+        }
+    }
+
     fn width(&self) -> usize {
         self::uax11_text_width_ambiguous_non_cjk(self)
+    }
+
+    fn has_ascii_line_breaks(&self) -> bool {
+        // Detect any and all occurences of CR and LF. Note that both CR and LF are considered a
+        // line break even when not adjacent to another line breaking control character (i.e., a
+        // lone CR).
+        self.as_bytes().iter().copied().any(ucs_ascii_is_cr_lf)
+    }
+
+    fn has_control_or_layout_points(&self) -> bool {
+        self.chars().any(self::uax44_point_is_cc_cf_zl_zp)
     }
 }
 
@@ -578,11 +686,11 @@ mod tests {
     #[test]
     fn render_block_text() {
         let segment: Segment = ContentSegment::try_from_raw_text("text").unwrap().into();
-        assert_eq!(segment.display().to_string(), "text");
+        assert_eq!(segment.display().default().to_string(), "text");
         let annotated = AnnotatedText::attached(segment, 0usize);
-        assert_eq!(annotated.display::<()>().to_string(), "text");
+        assert_eq!(annotated.display::<()>().default().to_string(), "text");
         let line: Line<_> = [annotated.clone(), annotated].into_iter().collect();
-        assert_eq!(line.display::<()>().to_string(), "texttext\n");
+        assert_eq!(line.display::<()>().default().to_string(), "texttext\n");
     }
 
     // TODO: Assert that the ANSI8 escape codes are present and correct in the rendered text.
@@ -591,6 +699,7 @@ mod tests {
     fn render_styled_block_text() {
         use owo_colors::Style;
 
+        use crate::env::Stream;
         use crate::text::annotation::Annotate;
         use crate::text::{BlankText, TryFromText};
 
@@ -607,6 +716,6 @@ mod tests {
             Segment::assert("blue").style(blue),
         ])
         .style(bold);
-        eprint!("{}", line.display());
+        eprint!("{}", line.display().detected(Stream::Error));
     }
 }

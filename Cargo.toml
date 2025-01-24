@@ -11,19 +11,20 @@ license = "MIT"
 keywords = [
     "layout",
     "terminal",
-    "text"
+    "text",
+    "tui",
 ]
 
 [features]
-default = [
-    # TODO: Remove this from default features.
-    "owo-colors",
-]
+default = ["owo-colors"]
 owo-colors = ["dep:owo-colors"]
 
 [dependencies]
 derive-where = "^1.2.0"
 itertools = "^0.10.0"
+supports-color = "^2.0.0"
+supports-unicode = "^2.0.0"
+terminal_size = "^0.3.0"
 unicode-properties = "^0.1.1"
 unicode-segmentation = "^1.8.0"
 unicode-width = "^0.1.0"

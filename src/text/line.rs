@@ -1,14 +1,14 @@
 use itertools::Itertools;
 use std::borrow::Cow;
 use std::convert::Infallible;
-use std::fmt::{self, Debug, Display, Formatter};
+use std::fmt::{self, Debug, Formatter};
 
 use crate::cow::MoveCow;
 use crate::slice::{SliceExt as _, SliceProjection};
 use crate::text::annotation::AnnotatedText;
 use crate::text::geometry::LinearGeometry;
 use crate::text::morphology::{Grapheme, MorphemeFor, MorphemeKind};
-use crate::text::render::{AsDisplay, Render, RenderContext};
+use crate::text::render::{DisplayProxy, Render, RenderContext};
 use crate::text::segment::{BlankSegment, ContentSegment, Segment, SegmentFor};
 use crate::text::style::AnsiPrefix;
 use crate::text::{
@@ -171,12 +171,12 @@ where
         }
     }
 
-    pub fn display<'d, S>(&'d self) -> impl 'd + Display
+    pub fn display<S>(&self) -> DisplayProxy<'_, Self, S>
     where
         Self: Render<S>,
-        S: 'd + AnsiPrefix,
+        S: AnsiPrefix,
     {
-        AsDisplay::from(self)
+        DisplayProxy::from_text(self)
     }
 
     pub fn is_empty(&self) -> bool {

@@ -1,6 +1,7 @@
 use std::borrow::Borrow;
 use std::fmt::{self, Display, Formatter, Write};
 
+use crate::env::StyleEncoding;
 use crate::text::annotation::AnnotatedText;
 use crate::text::morphology::FlexKind;
 use crate::text::render::{FmtWith, Monitor};
@@ -18,6 +19,13 @@ pub trait AnsiPrefix {
 
     fn display(&self) -> impl '_ + Display {
         FmtWith(|formatter| self.fmt(formatter))
+    }
+
+    // TODO: Unfortunately, it seems that no ANSI styling crates provide this information. For now,
+    //       styles report the most basic support so as not to be discarded when rendering to an
+    //       output stream that supports ANSI styling. Implement this properly when possible.
+    fn encoding(&self) -> StyleEncoding {
+        StyleEncoding::ANSI4
     }
 }
 
