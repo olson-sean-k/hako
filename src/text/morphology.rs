@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::convert::Infallible;
 use std::fmt::Debug;
 use std::num::NonZeroUsize;
 
@@ -15,7 +16,7 @@ pub struct Grapheme<'t> {
 }
 
 impl<'t> Grapheme<'t> {
-    pub const fn from_string_unchecked(text: Cow<'t, str>) -> Self {
+    pub(crate) const fn from_string_unchecked(text: Cow<'t, str>) -> Self {
         Grapheme { text }
     }
 
@@ -114,7 +115,13 @@ impl<'t> TryFrom<String> for Grapheme<'t> {
     }
 }
 
-pub trait MorphemeKind: 'static {
+pub trait Congruence {
+    type Error;
+
+    fn congruence(width: usize) -> Result<usize, Self::Error>;
+}
+
+pub trait MorphemeKind: 'static + Congruence {
     type Morpheme<'t>: Morpheme<'t>;
 
     const MIN_WIDTH: NonZeroUsize;
@@ -124,6 +131,15 @@ pub trait MorphemeKind: 'static {
 
 #[derive(Debug)]
 pub enum FlexKind {}
+
+impl Congruence for FlexKind {
+    type Error = Infallible;
+
+    #[inline(always)]
+    fn congruence(width: usize) -> Result<usize, Self::Error> {
+        Ok(width)
+    }
+}
 
 impl MorphemeKind for FlexKind {
     type Morpheme<'t> = Flex<'t>;
@@ -139,6 +155,15 @@ impl MorphemeKind for FlexKind {
 #[derive(Debug)]
 pub enum NarrowKind {}
 
+impl Congruence for NarrowKind {
+    type Error = Infallible;
+
+    #[inline(always)]
+    fn congruence(width: usize) -> Result<usize, Self::Error> {
+        Ok(width)
+    }
+}
+
 impl MorphemeKind for NarrowKind {
     type Morpheme<'t> = Narrow<'t>;
 
@@ -152,6 +177,19 @@ impl MorphemeKind for NarrowKind {
 
 #[derive(Debug)]
 pub enum WideKind {}
+
+impl Congruence for WideKind {
+    type Error = MorphologyError;
+
+    fn congruence(width: usize) -> Result<usize, Self::Error> {
+        if width % 2 == 0 {
+            Ok(width)
+        }
+        else {
+            Err(MorphologyError)
+        }
+    }
+}
 
 impl MorphemeKind for WideKind {
     type Morpheme<'t> = Wide<'t>;

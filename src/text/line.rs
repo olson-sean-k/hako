@@ -51,6 +51,10 @@ impl<T> Line<T> {
         self.append(&mut line);
         self
     }
+
+    pub fn has_segments(&self) -> bool {
+        !self.segments.is_empty()
+    }
 }
 
 impl<T, M> Line<T>
@@ -98,9 +102,9 @@ where
             .collect()
     }
 
-    pub fn try_from_width(width: usize) -> Result<Self, MorphologyError>
+    pub fn try_from_width(width: usize) -> Result<Self, M::Error>
     where
-        MorphologyError: From<T::Error>,
+        M::Error: From<T::Error>,
         T: TryFromText<Segment<T::RawText, M>>,
     {
         BlankSegment::try_from_width(width)
@@ -173,10 +177,6 @@ where
         S: 'd + AnsiPrefix,
     {
         AsDisplay::from(self)
-    }
-
-    pub fn has_segments(&self) -> bool {
-        !self.segments.is_empty()
     }
 
     pub fn is_empty(&self) -> bool {

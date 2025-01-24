@@ -466,7 +466,7 @@ impl BlankText {
         BlankText(
             width
                 .checked_add(width % M::MIN_WIDTH.get())
-                .expect("overflow determining width"),
+                .expect("overflow determining width of blank text"),
         )
     }
 
@@ -483,7 +483,7 @@ impl BlankText {
     {
         BlankText(
             n.checked_mul(M::MIN_WIDTH.get())
-                .expect("overflow determining width"),
+                .expect("overflow determining width of blank text"),
         )
     }
 

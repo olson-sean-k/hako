@@ -213,7 +213,7 @@ where
     T: RawText,
     M: MorphemeKind,
 {
-    type Error = MorphologyError;
+    type Error = M::Error;
 
     fn try_from_text(text: BlankText) -> Result<Self, Self::Error> {
         BlankSegment::try_from_text(text).map(From::from)
@@ -271,13 +271,8 @@ impl<T, M> BlankSegment<T, M>
 where
     M: MorphemeKind,
 {
-    pub const fn try_from_width(width: usize) -> Result<Self, MorphologyError> {
-        if width % M::MIN_WIDTH.get() == 0 {
-            Ok(BlankSegment::from_width_unchecked(width))
-        }
-        else {
-            Err(MorphologyError)
-        }
+    pub fn try_from_width(width: usize) -> Result<Self, M::Error> {
+        M::congruence(width).map(BlankSegment::from_width_unchecked)
     }
 
     pub fn from_min_width(width: usize) -> Self {
@@ -408,7 +403,7 @@ where
     T: RawText,
     M: MorphemeKind,
 {
-    type Error = MorphologyError;
+    type Error = M::Error;
 
     fn try_from_text(text: BlankText) -> Result<Self, Self::Error> {
         BlankSegment::try_from_width(text.0)
