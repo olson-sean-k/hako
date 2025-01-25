@@ -1,3 +1,4 @@
+use ascii::AsciiChar;
 use std::fmt::{self, Arguments, Debug, Display, Formatter, Write};
 use std::marker::PhantomData;
 
@@ -143,14 +144,11 @@ pub struct RenderNode<S> {
 #[derive(Clone, Debug)]
 pub struct RenderContext<S> {
     encoding: Encoding,
+    ascii_replacement_character: AsciiChar,
     nodes: Vec<RenderNode<S>>,
 }
 
 impl<S> RenderContext<S> {
-    pub fn nodes(&self) -> &[RenderNode<S>] {
-        self.nodes.as_slice()
-    }
-
     pub fn push_node_and_fmt<T, F>(&mut self, formatter: &mut Formatter, f: F) -> fmt::Result
     where
         T: Render<S>,
@@ -162,15 +160,20 @@ impl<S> RenderContext<S> {
         self.nodes.pop().unwrap();
         result
     }
+
+    pub fn nodes(&self) -> &[RenderNode<S>] {
+        self.nodes.as_slice()
+    }
+
+    pub fn ascii_replacement_character(&self) -> AsciiChar {
+        self.ascii_replacement_character
+    }
 }
 
 impl<S> RenderContext<S>
 where
     S: AnsiPrefix,
 {
-    // TODO: Convert Unicode text to ASCII via `to_ascii_lossy` (or, more likely, a similar
-    //       conversion over an iterator of graphemes that does not require allocation) when
-    //       configured for ASCII output and given Unicode text input.
     pub fn fmt_with_ansi_fence(
         &self,
         formatter: &mut Formatter,
@@ -185,6 +188,21 @@ where
             text,
         )
     }
+
+    // TODO: This function is primarily used to inform block text if it must re-encode its content
+    //       before rendering with `fmt_with_ansi_fence`. Unlike styles though, this pushes the
+    //       necessary logic into `Render` implementations. Ideally, block text types would not
+    //       need to be concerned with this at all.
+    //
+    //       One potential way to support an API that works more like this is to accept an iterator
+    //       of graphemes rather than an `impl Display` in `fmt_with_ansi_fence` functions.
+    //       However, this could cause terrible performance if writes are not buffered. If
+    //       buffering is possible, accept an iterator and factor re-encoding logic into
+    //       `RenderContext`. Consider an API that implicitly wraps outputs steams with an
+    //       appropriate `BufWriter`.
+    pub fn has_text_encoding(&self, encoding: TextEncoding) -> bool {
+        encoding.is_in(&self.encoding.text)
+    }
 }
 
 impl<S> Default for RenderContext<S> {
@@ -194,6 +212,7 @@ impl<S> Default for RenderContext<S> {
                 style: StyleEncoding::NONE,
                 text: TextEncoding::ASCII,
             },
+            ascii_replacement_character: AsciiChar::Question,
             nodes: Vec::default(),
         }
     }

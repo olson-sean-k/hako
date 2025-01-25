@@ -8,14 +8,15 @@ use std::marker::PhantomData;
 use std::mem;
 
 use crate::cow::MoveCow;
+use crate::env::TextEncoding;
 use crate::text::geometry::LinearGeometry;
 use crate::text::modal::ModalText;
 use crate::text::morphology::{FlexKind, Grapheme, Morpheme, MorphemeFor, MorphemeKind};
 use crate::text::render::{DisplayProxy, FmtWith, Render, RenderContext};
 use crate::text::style::AnsiPrefix;
 use crate::text::{
-    BlankText, BlockText, BlockTextProjection, Indexed, MorphologyError, RawText, StrExt as _,
-    ToStringMut, TryFromText,
+    BlankText, BlockText, BlockTextProjection, Indexed, IteratorExt as _, MorphologyError, RawText,
+    StrExt as _, ToStringMut, TryFromText,
 };
 
 use ModalText::{Blank, Content};
@@ -298,6 +299,10 @@ where
             .checked_add(segment.width)
             .expect("overflow appending blank segment");
     }
+
+    fn encoding() -> TextEncoding {
+        M::min_width_blank().as_ref().encoding()
+    }
 }
 
 impl<T, M> BlankSegment<T, M>
@@ -378,15 +383,32 @@ where
     S: AnsiPrefix,
 {
     fn fmt(&self, formatter: &mut Formatter, context: &mut RenderContext<S>) -> fmt::Result {
-        context.fmt_with_ansi_fence(
-            formatter,
-            FmtWith(|formatter| {
-                for morpheme in self.morphemes().map(Indexed::into_text) {
-                    write!(formatter, "{}", morpheme.as_ref())?;
-                }
-                Ok(())
-            }),
-        )
+        if context.has_text_encoding(Self::encoding()) {
+            context.fmt_with_ansi_fence(
+                formatter,
+                FmtWith(|formatter| {
+                    for morpheme in self.morphemes().map(Indexed::into_text) {
+                        write!(formatter, "{}", morpheme.as_ref())?;
+                    }
+                    Ok(())
+                }),
+            )
+        }
+        else {
+            context.fmt_with_ansi_fence(
+                formatter,
+                FmtWith(|formatter| {
+                    for morpheme in self
+                        .morphemes()
+                        .map(Indexed::into_text)
+                        .map_unicode_to_ascii(|_| context.ascii_replacement_character())
+                    {
+                        write!(formatter, "{}", morpheme.as_ref())?;
+                    }
+                    Ok(())
+                }),
+            )
+        }
     }
 }
 
@@ -519,6 +541,10 @@ where
     {
         let ContentSegment { text, .. } = self;
         ContentSegment::try_from_text(f(text))
+    }
+
+    fn encoding(&self) -> TextEncoding {
+        self.text.as_ref().encoding()
     }
 
     pub fn as_str(&self) -> &str {
@@ -654,7 +680,19 @@ where
     S: AnsiPrefix,
 {
     fn fmt(&self, formatter: &mut Formatter, context: &mut RenderContext<S>) -> fmt::Result {
-        context.fmt_with_ansi_fence(formatter, self.as_str())
+        if context.has_text_encoding(self.encoding()) {
+            context.fmt_with_ansi_fence(formatter, self.as_str())
+        }
+        else {
+            // TODO: This requires an allocation for the re-encoded text. Is a simple loop like
+            //       that used for `BlankSegment` better? Perhaps there's a better way write many
+            //       small segments of text?
+            context.fmt_with_ansi_fence(
+                formatter,
+                self.as_str()
+                    .to_ascii_lossy(|_| context.ascii_replacement_character()),
+            )
+        }
     }
 }
 

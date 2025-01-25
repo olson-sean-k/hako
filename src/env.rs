@@ -180,27 +180,27 @@ impl StyleEncoding {
     pub const ANSI8: Self = StyleEncoding(0b00000011);
     pub const ANSI24: Self = StyleEncoding(0b00000111);
 
-    pub fn or(lhs: Self, rhs: Self) -> Self {
+    pub const fn or(lhs: Self, rhs: Self) -> Self {
         StyleEncoding(lhs.0 | rhs.0)
     }
 
-    pub fn is_in(&self, encoding: &Self) -> bool {
+    pub const fn is_in(&self, encoding: &Self) -> bool {
         (self.0 & encoding.0) == self.0
     }
 
-    pub fn has_style_support(&self) -> bool {
+    pub const fn has_style_support(&self) -> bool {
         self.0 != 0
     }
 
-    pub fn has_ansi4(&self) -> bool {
+    pub const fn has_ansi4(&self) -> bool {
         self.0 & Self::ANSI4.0 == Self::ANSI4.0
     }
 
-    pub fn has_ansi8(&self) -> bool {
+    pub const fn has_ansi8(&self) -> bool {
         self.0 & Self::ANSI8.0 == Self::ANSI8.0
     }
 
-    pub fn has_ansi24(&self) -> bool {
+    pub const fn has_ansi24(&self) -> bool {
         self.0 & Self::ANSI24.0 == Self::ANSI24.0
     }
 }
@@ -212,19 +212,19 @@ impl TextEncoding {
     pub const ASCII: Self = TextEncoding(0b00000001);
     pub const UNICODE: Self = TextEncoding(0b00000011);
 
-    pub fn or(lhs: Self, rhs: Self) -> Self {
+    pub const fn or(lhs: Self, rhs: Self) -> Self {
         TextEncoding(lhs.0 | rhs.0)
     }
 
-    pub fn is_in(&self, encoding: &Self) -> bool {
+    pub const fn is_in(&self, encoding: &Self) -> bool {
         (self.0 & encoding.0) == self.0
     }
 
-    pub fn has_ascii(&self) -> bool {
+    pub const fn has_ascii(&self) -> bool {
         self.0 & Self::ASCII.0 == Self::ASCII.0
     }
 
-    pub fn has_unicode(&self) -> bool {
+    pub const fn has_unicode(&self) -> bool {
         self.0 & Self::UNICODE.0 == Self::UNICODE.0
     }
 }

@@ -3,8 +3,9 @@ use std::convert::Infallible;
 use std::fmt::Debug;
 use std::num::NonZeroUsize;
 
+use crate::env::TextEncoding;
 use crate::text::modal::ModalWidth;
-use crate::text::{self, MorphologyError, StrExt as _};
+use crate::text::{self, Indexed, MorphologyError, StrExt as _};
 
 // SAFETY: The parameter `n` is not zero.
 const TWO: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(2) };
@@ -47,6 +48,10 @@ impl<'t> Grapheme<'t> {
         self.text.chars()
     }
 
+    pub fn encoding(&self) -> TextEncoding {
+        self.text.as_ref().encoding()
+    }
+
     pub fn width(&self) -> usize {
         self.text.as_ref().width()
     }
@@ -71,6 +76,12 @@ impl<'t> From<Flex<'t>> for Grapheme<'t> {
             Flex::Narrow(narrow) => narrow.into(),
             Flex::Wide(wide) => wide.into(),
         }
+    }
+}
+
+impl<'t, N> From<Indexed<N, Grapheme<'t>>> for Grapheme<'t> {
+    fn from(indexed: Indexed<N, Grapheme<'t>>) -> Self {
+        indexed.text
     }
 }
 

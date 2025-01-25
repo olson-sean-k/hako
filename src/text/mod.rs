@@ -9,6 +9,7 @@ pub mod ops;
 pub mod render;
 pub mod style;
 
+use ascii::AsciiChar;
 use itertools::Itertools;
 use std::borrow::Cow;
 use std::convert::Infallible;
@@ -79,6 +80,31 @@ impl From<Infallible> for BoundaryError {
     }
 }
 
+pub trait IteratorExt: Iterator {
+    fn map_unicode_to_ascii<'t, F>(self, mut f: F) -> impl Iterator<Item = Grapheme<'t>>
+    where
+        Self: Sized,
+        Self::Item: Into<Grapheme<'t>>,
+        F: FnMut(&Grapheme<'t>) -> AsciiChar,
+    {
+        self.map(Into::into).map(move |grapheme| {
+            if grapheme.as_ref().is_ascii() {
+                grapheme
+            }
+            else {
+                Grapheme::from_string_unchecked(
+                    iter::repeat(f(&grapheme).as_char())
+                        .take(grapheme.width())
+                        .collect::<String>()
+                        .into(),
+                )
+            }
+        })
+    }
+}
+
+impl<I> IteratorExt for I where I: Iterator {}
+
 pub trait U8Ext: Copy {
     fn is_utf8_char_boundary(self) -> bool;
 }
@@ -90,7 +116,9 @@ impl U8Ext for u8 {
 }
 
 pub trait StrExt {
-    fn to_ascii_lossy(&self) -> Cow<'_, str>;
+    fn to_ascii_lossy<'t, F>(&'t self, f: F) -> Cow<'t, str>
+    where
+        F: FnMut(&Grapheme<'t>) -> AsciiChar;
 
     fn split_at_ascii_line_breaks(&self) -> impl '_ + Iterator<Item = &'_ str>;
 
@@ -114,7 +142,10 @@ pub trait StrExt {
 }
 
 impl StrExt for str {
-    fn to_ascii_lossy(&self) -> Cow<'_, str> {
+    fn to_ascii_lossy<'t, F>(&'t self, f: F) -> Cow<'t, str>
+    where
+        F: FnMut(&Grapheme<'t>) -> AsciiChar,
+    {
         if self.is_ascii() {
             self.into()
         }
@@ -122,19 +153,8 @@ impl StrExt for str {
             let ascii: String = self
                 .graphemes()
                 .map(Indexed::into_text)
+                .map_unicode_to_ascii(f)
                 .map(Grapheme::into_string)
-                .map(|grapheme| -> Cow<'_, str> {
-                    if grapheme.is_ascii() {
-                        grapheme.into()
-                    }
-                    else {
-                        // TODO: Allow this to be configured via a robust ASCII character type.
-                        iter::repeat('?')
-                            .take(grapheme.width())
-                            .collect::<String>()
-                            .into()
-                    }
-                })
                 .collect();
             ascii.into()
         }
@@ -711,9 +731,9 @@ mod tests {
         let line = Line::from_iter([
             Segment::<&str>::assert("red").style(red),
             Segment::assert(BlankText(3)).into(),
-            Segment::assert("green").style(green),
+            Segment::assert("緑色").style(green),
             Segment::assert(BlankText(3)).into(),
-            Segment::assert("blue").style(blue),
+            Segment::assert("Blau").style(blue),
         ])
         .style(bold);
         eprint!("{}", line.display().detected(Stream::Error));

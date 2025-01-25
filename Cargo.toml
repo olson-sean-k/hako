@@ -20,6 +20,7 @@ default = ["owo-colors"]
 owo-colors = ["dep:owo-colors"]
 
 [dependencies]
+ascii = "^1.1.0"
 derive-where = "^1.2.0"
 itertools = "^0.10.0"
 supports-color = "^2.0.0"
