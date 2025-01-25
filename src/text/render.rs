@@ -3,7 +3,9 @@ use std::fmt::{self, Arguments, Debug, Display, Formatter, Write};
 use std::marker::PhantomData;
 
 use crate::env::{Detected, Encoding, Query, StyleEncoding, TextEncoding};
+use crate::text::morphology::Grapheme;
 use crate::text::style::{AnsiPrefix, Style};
+use crate::text::IteratorExt as _;
 
 // TODO: Though it may introduce some tricky indirection, it may be useful for `Render`
 //       implementations and `display` functions to only require style types that can differ but
@@ -164,44 +166,34 @@ impl<S> RenderContext<S> {
     pub fn nodes(&self) -> &[RenderNode<S>] {
         self.nodes.as_slice()
     }
-
-    pub fn ascii_replacement_character(&self) -> AsciiChar {
-        self.ascii_replacement_character
-    }
 }
 
 impl<S> RenderContext<S>
 where
     S: AnsiPrefix,
 {
-    pub fn fmt_with_ansi_fence(
+    pub fn fmt_with_ansi_fence<'t>(
         &self,
+        encoding: TextEncoding,
         formatter: &mut Formatter,
-        text: impl Display,
+        text: impl IntoIterator<Item = Grapheme<'t>>,
     ) -> fmt::Result {
-        Style::fmt_with_ansi_fence(
-            self.nodes()
-                .iter()
-                .map(|node| &node.style)
-                .filter(|style| style.as_ref().encoding().is_in(&self.encoding.style)),
-            formatter,
-            text,
-        )
-    }
-
-    // TODO: This function is primarily used to inform block text if it must re-encode its content
-    //       before rendering with `fmt_with_ansi_fence`. Unlike styles though, this pushes the
-    //       necessary logic into `Render` implementations. Ideally, block text types would not
-    //       need to be concerned with this at all.
-    //
-    //       One potential way to support an API that works more like this is to accept an iterator
-    //       of graphemes rather than an `impl Display` in `fmt_with_ansi_fence` functions.
-    //       However, this could cause terrible performance if writes are not buffered. If
-    //       buffering is possible, accept an iterator and factor re-encoding logic into
-    //       `RenderContext`. Consider an API that implicitly wraps outputs steams with an
-    //       appropriate `BufWriter`.
-    pub fn has_text_encoding(&self, encoding: TextEncoding) -> bool {
-        encoding.is_in(&self.encoding.text)
+        let styles = self
+            .nodes()
+            .iter()
+            .map(|node| &node.style)
+            .filter(|style| style.as_ref().encoding().is_in(&self.encoding.style));
+        if encoding.is_in(&self.encoding.text) {
+            Style::fmt_with_ansi_fence(styles, formatter, text)
+        }
+        else {
+            Style::fmt_with_ansi_fence(
+                styles,
+                formatter,
+                text.into_iter()
+                    .map_unicode_to_ascii(|_| self.ascii_replacement_character),
+            )
+        }
     }
 }
 

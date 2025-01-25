@@ -3,7 +3,7 @@ use std::fmt::{self, Display, Formatter, Write};
 
 use crate::env::StyleEncoding;
 use crate::text::annotation::AnnotatedText;
-use crate::text::morphology::FlexKind;
+use crate::text::morphology::{FlexKind, Grapheme};
 use crate::text::render::{FmtWith, Monitor};
 use crate::text::{Line, Segment};
 
@@ -34,6 +34,10 @@ impl AnsiPrefix for () {
     fn fmt(&self, _: &mut Formatter) -> fmt::Result {
         Ok(())
     }
+
+    fn encoding(&self) -> StyleEncoding {
+        StyleEncoding::NONE
+    }
 }
 
 impl<S> AnsiPrefix for Option<S>
@@ -46,6 +50,13 @@ where
             _ => Ok(()),
         }
     }
+
+    fn encoding(&self) -> StyleEncoding {
+        match self {
+            Some(ref prefix) => prefix.encoding(),
+            _ => StyleEncoding::NONE,
+        }
+    }
 }
 
 impl<'a, T> AnsiPrefix for &'a T
@@ -55,6 +66,14 @@ where
     fn fmt(&self, formatter: &mut Formatter) -> fmt::Result {
         T::fmt(*self, formatter)
     }
+
+    fn display(&self) -> impl '_ + Display {
+        T::display(*self)
+    }
+
+    fn encoding(&self) -> StyleEncoding {
+        T::encoding(*self)
+    }
 }
 
 impl<'a, T> AnsiPrefix for &'a mut T
@@ -63,6 +82,14 @@ where
 {
     fn fmt(&self, formatter: &mut Formatter) -> fmt::Result {
         T::fmt(*self, formatter)
+    }
+
+    fn display(&self) -> impl '_ + Display {
+        T::display(*self)
+    }
+
+    fn encoding(&self) -> StyleEncoding {
+        T::encoding(*self)
     }
 }
 
@@ -107,10 +134,10 @@ where
         Style(f(self.0))
     }
 
-    pub fn fmt_with_ansi_fence<I>(
+    pub fn fmt_with_ansi_fence<'t, I>(
         styles: I,
         formatter: &mut Formatter,
-        text: impl Display,
+        text: impl IntoIterator<Item = Grapheme<'t>>,
     ) -> fmt::Result
     where
         I: IntoIterator,
@@ -121,7 +148,13 @@ where
             write!(formatter, "{}", style.borrow().as_ref().display())?;
         }
         let has_ansi_prefix = formatter.has_observed_writes();
-        write!(formatter, "{}", text)?;
+        // Writing each grapheme is generally much less efficient than writing a buffer. In
+        // particular, it is important that write targets are buffered, otherwise each write may
+        // immediately request I/O from the operating system! When writing to standard outputs, a
+        // `BufWriter` or something similar is very important for performance.
+        for grapheme in text {
+            write!(formatter, "{}", grapheme.as_ref())?;
+        }
         if has_ansi_prefix {
             write!(formatter, "{}", AnsiSuffix::display())?;
         }

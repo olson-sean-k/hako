@@ -12,11 +12,11 @@ use crate::env::TextEncoding;
 use crate::text::geometry::LinearGeometry;
 use crate::text::modal::ModalText;
 use crate::text::morphology::{FlexKind, Grapheme, Morpheme, MorphemeFor, MorphemeKind};
-use crate::text::render::{DisplayProxy, FmtWith, Render, RenderContext};
+use crate::text::render::{DisplayProxy, Render, RenderContext};
 use crate::text::style::AnsiPrefix;
 use crate::text::{
-    BlankText, BlockText, BlockTextProjection, Indexed, IteratorExt as _, MorphologyError, RawText,
-    StrExt as _, ToStringMut, TryFromText,
+    BlankText, BlockText, BlockTextProjection, Indexed, MorphologyError, RawText, StrExt as _,
+    ToStringMut, TryFromText,
 };
 
 use ModalText::{Blank, Content};
@@ -383,32 +383,11 @@ where
     S: AnsiPrefix,
 {
     fn fmt(&self, formatter: &mut Formatter, context: &mut RenderContext<S>) -> fmt::Result {
-        if context.has_text_encoding(Self::encoding()) {
-            context.fmt_with_ansi_fence(
-                formatter,
-                FmtWith(|formatter| {
-                    for morpheme in self.morphemes().map(Indexed::into_text) {
-                        write!(formatter, "{}", morpheme.as_ref())?;
-                    }
-                    Ok(())
-                }),
-            )
-        }
-        else {
-            context.fmt_with_ansi_fence(
-                formatter,
-                FmtWith(|formatter| {
-                    for morpheme in self
-                        .morphemes()
-                        .map(Indexed::into_text)
-                        .map_unicode_to_ascii(|_| context.ascii_replacement_character())
-                    {
-                        write!(formatter, "{}", morpheme.as_ref())?;
-                    }
-                    Ok(())
-                }),
-            )
-        }
+        context.fmt_with_ansi_fence(
+            Self::encoding(),
+            formatter,
+            self.graphemes().map(Indexed::into_text),
+        )
     }
 }
 
@@ -680,19 +659,11 @@ where
     S: AnsiPrefix,
 {
     fn fmt(&self, formatter: &mut Formatter, context: &mut RenderContext<S>) -> fmt::Result {
-        if context.has_text_encoding(self.encoding()) {
-            context.fmt_with_ansi_fence(formatter, self.as_str())
-        }
-        else {
-            // TODO: This requires an allocation for the re-encoded text. Is a simple loop like
-            //       that used for `BlankSegment` better? Perhaps there's a better way write many
-            //       small segments of text?
-            context.fmt_with_ansi_fence(
-                formatter,
-                self.as_str()
-                    .to_ascii_lossy(|_| context.ascii_replacement_character()),
-            )
-        }
+        context.fmt_with_ansi_fence(
+            self.encoding(),
+            formatter,
+            self.graphemes().map(Indexed::into_text),
+        )
     }
 }
 
