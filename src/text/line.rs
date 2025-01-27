@@ -8,7 +8,7 @@ use crate::slice::{SliceExt as _, SliceProjection};
 use crate::text::annotation::AnnotatedText;
 use crate::text::geometry::LinearGeometry;
 use crate::text::morphology::{Grapheme, MorphemeFor, MorphemeKind};
-use crate::text::render::{DisplayProxy, Render, RenderContext};
+use crate::text::render::{DisplayProxy, DisplayStyle, Render, RenderContext};
 use crate::text::segment::{BlankSegment, ContentSegment, Segment, SegmentFor};
 use crate::text::style::AnsiPrefix;
 use crate::text::{
@@ -54,6 +54,15 @@ impl<T> Line<T> {
 
     pub fn has_segments(&self) -> bool {
         !self.segments.is_empty()
+    }
+}
+
+impl<T> Line<T>
+where
+    T: DisplayStyle,
+{
+    pub fn display(&self) -> DisplayProxy<'_, Self, <Self as DisplayStyle>::Style> {
+        DisplayProxy::from_text(self)
     }
 }
 
@@ -171,14 +180,6 @@ where
         }
     }
 
-    pub fn display<S>(&self) -> DisplayProxy<'_, Self, S>
-    where
-        Self: Render<S>,
-        S: AnsiPrefix,
-    {
-        DisplayProxy::from_text(self)
-    }
-
     pub fn is_empty(&self) -> bool {
         self.segments().iter().all(|segment| segment.is_empty())
     }
@@ -262,6 +263,13 @@ impl<T> Default for Line<T> {
             segments: Default::default(),
         }
     }
+}
+
+impl<T> DisplayStyle for Line<T>
+where
+    T: DisplayStyle,
+{
+    type Style = T::Style;
 }
 
 impl<T> Extend<T> for Line<T> {

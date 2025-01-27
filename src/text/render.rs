@@ -24,6 +24,10 @@ where
     }
 }
 
+pub trait DisplayStyle {
+    type Style: AnsiPrefix;
+}
+
 #[derive(Debug)]
 pub struct DisplayProxy<'t, T, S = ()> {
     text: &'t T,

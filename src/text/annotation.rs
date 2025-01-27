@@ -1,7 +1,7 @@
 use std::fmt::{self, Debug, Formatter};
 
 use crate::text::geometry::LinearGeometry;
-use crate::text::render::{DisplayProxy, Render, RenderContext, RenderNode};
+use crate::text::render::{DisplayProxy, DisplayStyle, Render, RenderContext, RenderNode};
 use crate::text::style::{AnsiPrefix, Style};
 use crate::text::{BlockText, BlockTextProjection, TryFromText};
 
@@ -83,6 +83,15 @@ impl<T, A> AnnotatedText<T, A> {
     }
 }
 
+impl<T, A> AnnotatedText<T, A>
+where
+    Self: DisplayStyle,
+{
+    pub fn display(&self) -> DisplayProxy<'_, Self, <Self as DisplayStyle>::Style> {
+        DisplayProxy::from_text(self)
+    }
+}
+
 impl<T, A> AnnotatedText<Option<T>, A> {
     pub fn transpose(self) -> Option<AnnotatedText<T, A>> {
         let AnnotatedText { text, annotation } = self;
@@ -115,14 +124,6 @@ impl<T, A> AnnotatedText<T, Attachment<A>> {
     pub fn attachment(&self) -> &A {
         &self.annotation.0
     }
-
-    pub fn display<S>(&self) -> DisplayProxy<'_, Self, S>
-    where
-        Self: Render<S>,
-        S: AnsiPrefix,
-    {
-        DisplayProxy::from_text(self)
-    }
 }
 
 impl<T, S> AnnotatedText<T, Style<S>>
@@ -146,13 +147,6 @@ where
 
     pub fn style(&self) -> &S {
         self.annotation.as_ref()
-    }
-
-    pub fn display(&self) -> DisplayProxy<'_, Self, S>
-    where
-        Self: Render<S>,
-    {
-        DisplayProxy::from_text(self)
     }
 }
 
@@ -200,6 +194,20 @@ where
     fn as_block_text_mut(&mut self) -> &mut Self::BlockText {
         &mut self.text
     }
+}
+
+impl<T, A> DisplayStyle for AnnotatedText<T, Attachment<A>>
+where
+    T: DisplayStyle,
+{
+    type Style = T::Style;
+}
+
+impl<T, S> DisplayStyle for AnnotatedText<T, Style<S>>
+where
+    S: AnsiPrefix,
+{
+    type Style = S;
 }
 
 impl<T, A> From<T> for AnnotatedText<T, A>

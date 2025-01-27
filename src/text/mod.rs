@@ -708,12 +708,12 @@ mod tests {
         let segment: Segment = ContentSegment::try_from_raw_text("text").unwrap().into();
         assert_eq!(segment.display().default().to_string(), "text");
         let annotated = AnnotatedText::attached(segment, 0usize);
-        assert_eq!(annotated.display::<()>().default().to_string(), "text");
+        assert_eq!(annotated.display().default().to_string(), "text");
         let line: Line<_> = [annotated.clone(), annotated].into_iter().collect();
-        assert_eq!(line.display::<()>().default().to_string(), "texttext\n");
+        assert_eq!(line.display().default().to_string(), "texttext\n");
     }
 
-    // TODO: Assert that the ANSI8 escape codes are present and correct in the rendered text.
+    // TODO: Assert that the ANSI style escape codes are present and correct in the rendered text.
     #[cfg(feature = "owo-colors")]
     #[test]
     fn render_styled_block_text() {

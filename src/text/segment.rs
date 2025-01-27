@@ -12,7 +12,7 @@ use crate::env::TextEncoding;
 use crate::text::geometry::LinearGeometry;
 use crate::text::modal::ModalText;
 use crate::text::morphology::{FlexKind, Grapheme, Morpheme, MorphemeFor, MorphemeKind};
-use crate::text::render::{DisplayProxy, Render, RenderContext};
+use crate::text::render::{DisplayProxy, DisplayStyle, Render, RenderContext};
 use crate::text::style::AnsiPrefix;
 use crate::text::{
     BlankText, BlockText, BlockTextProjection, Indexed, MorphologyError, RawText, StrExt as _,
@@ -40,7 +40,7 @@ where
         }
     }
 
-    pub fn display(&self) -> DisplayProxy<'_, Self, ()> {
+    pub fn display(&self) -> DisplayProxy<'_, Self, <Self as DisplayStyle>::Style> {
         DisplayProxy::from_text(self)
     }
 
@@ -149,6 +149,10 @@ where
             .map_blank(BlankSegment::morphemes)
             .map_content(ContentSegment::morphemes)
     }
+}
+
+impl<T, M> DisplayStyle for Segment<T, M> {
+    type Style = ();
 }
 
 impl<'t, T, M, A> Extend<A> for Segment<T, M>
