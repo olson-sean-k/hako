@@ -21,7 +21,30 @@ use crate::text::{
 
 use ModalText::{Blank, Content};
 
-pub type SegmentFor<T, M> = Segment<<T as BlockTextProjection>::RawText, M>;
+type ModalSegment<T, M> = ModalText<BlankSegment<T, M>, ContentSegment<T, M>>;
+
+pub type SegmentIndex = usize;
+
+pub trait SegmentComposition:
+    BlockTextProjection<
+    BlockText = Segment<Self::Composed, Self::MorphemeKind>,
+    RawText = Self::Composed,
+>
+{
+    type Composed: RawText;
+    type MorphemeKind: MorphemeKind;
+}
+
+impl<T, U, M> SegmentComposition for T
+where
+    Segment<U, M>: BlockText,
+    T: BlockTextProjection<BlockText = Segment<U, M>, RawText = U>,
+    U: RawText,
+    M: MorphemeKind,
+{
+    type Composed = U;
+    type MorphemeKind = M;
+}
 
 #[derive_where(Clone, Copy, Debug, Eq, Hash, PartialEq; T)]
 pub struct Segment<T = String, M = FlexKind> {
@@ -132,18 +155,16 @@ where
         = MorphemeFor<'t, M>
     where
         Self: 't;
-    type Index = usize;
+    type Index = SegmentIndex;
 
-    fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Self::Index, Grapheme<'_>>> {
+    fn graphemes(&self) -> impl '_ + Iterator<Item = Indexed<Self::Index, Grapheme<'_>>> {
         self.modal
             .as_ref()
             .map_blank(BlankSegment::graphemes)
             .map_content(ContentSegment::graphemes)
     }
 
-    fn morphemes(
-        &self,
-    ) -> impl '_ + Clone + Iterator<Item = Indexed<Self::Index, Self::Morpheme<'_>>> {
+    fn morphemes(&self) -> impl '_ + Iterator<Item = Indexed<Self::Index, Self::Morpheme<'_>>> {
         self.modal
             .as_ref()
             .map_blank(BlankSegment::morphemes)
@@ -246,10 +267,7 @@ where
     }
 }
 
-type ModalSegment<T, M> = ModalText<BlankSegment<T, M>, ContentSegment<T, M>>;
-
 #[derive_where(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-#[repr(transparent)]
 pub struct BlankSegment<T = String, M = FlexKind> {
     width: usize,
     _phantom: PhantomData<fn() -> (T, M)>,
@@ -260,7 +278,7 @@ impl<T, M> BlankSegment<T, M> {
         BlankSegment::from_width_unchecked(0)
     }
 
-    const fn from_width_unchecked(width: usize) -> Self {
+    pub(crate) const fn from_width_unchecked(width: usize) -> Self {
         BlankSegment {
             width,
             _phantom: PhantomData,
@@ -347,16 +365,14 @@ where
         = MorphemeFor<'t, M>
     where
         Self: 't;
-    type Index = usize;
+    type Index = SegmentIndex;
 
-    fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Self::Index, Grapheme<'_>>> {
+    fn graphemes(&self) -> impl '_ + Iterator<Item = Indexed<Self::Index, Grapheme<'_>>> {
         self.morphemes()
             .map(|morpheme| morpheme.map_text(Into::into))
     }
 
-    fn morphemes(
-        &self,
-    ) -> impl '_ + Clone + Iterator<Item = Indexed<Self::Index, Self::Morpheme<'_>>> {
+    fn morphemes(&self) -> impl '_ + Iterator<Item = Indexed<Self::Index, Self::Morpheme<'_>>> {
         iter::repeat(M::min_width_blank())
             .enumerate()
             .take(self.width / M::MIN_WIDTH)
@@ -614,7 +630,7 @@ where
         Self: 't;
     type Index = usize;
 
-    fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Self::Index, Grapheme<'_>>> {
+    fn graphemes(&self) -> impl '_ + Iterator<Item = Indexed<Self::Index, Grapheme<'_>>> {
         self.text.as_ref().graphemes()
     }
 }

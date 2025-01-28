@@ -1,5 +1,3 @@
-mod slice;
-
 pub mod align;
 pub mod block;
 pub mod content;

@@ -1,3 +1,4 @@
+mod block;
 mod line;
 mod modal;
 mod segment;
@@ -22,9 +23,10 @@ use crate::cow::{IntoWritten, MoveCow};
 use crate::env::TextEncoding;
 use crate::text::morphology::{Grapheme, Morpheme, MorphemeKind};
 
+pub use crate::text::block::{BlankBlock, Block, BlockIndex, ContentBlock};
 pub use crate::text::line::{Line, LineIndex};
 pub use crate::text::modal::ModalWidth;
-pub use crate::text::segment::{BlankSegment, ContentSegment, Segment};
+pub use crate::text::segment::{BlankSegment, ContentSegment, Segment, SegmentIndex};
 
 const CR: u8 = b'\r';
 const LF: u8 = b'\n';
@@ -499,7 +501,7 @@ pub trait BlockText:
         Self: 't;
     type Index: Eq;
 
-    fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Self::Index, Grapheme<'_>>>;
+    fn graphemes(&self) -> impl '_ + Iterator<Item = Indexed<Self::Index, Grapheme<'_>>>;
 
     // TODO: `BlockText` types must never allow construction from text containing non-morphemes.
     //       Ideally then, this function need not examine the text and can instead construct
@@ -508,9 +510,7 @@ pub trait BlockText:
     //       grant access to `unchecked`, which is intentionally not in the public API). This trait
     //       could be sealed or an internal function could be used to trivially implement this
     //       function instead of providing a default.
-    fn morphemes(
-        &self,
-    ) -> impl '_ + Clone + Iterator<Item = Indexed<Self::Index, Self::Morpheme<'_>>> {
+    fn morphemes(&self) -> impl '_ + Iterator<Item = Indexed<Self::Index, Self::Morpheme<'_>>> {
         self.graphemes()
             .map(|indexed| indexed.map_text(Self::Morpheme::try_from).transpose())
             .map(move |morpheme| match morpheme {
@@ -523,15 +523,15 @@ pub trait BlockText:
 pub trait BlockTextProjection {
     type RawText: RawText;
     type BlockText: BlockText<RawText = Self::RawText>;
-    type Mapped<T>: BlockTextProjection
-    where
-        T: BlockText;
+    type Mapped<T>;
 
     fn into_block_text(self) -> Self::BlockText;
 
+    // TODO: The bounds and output types here are not very constrained. Reexamine this and, if
+    //       possible, reduce the need for complex bounds where this function is used.
     fn map_block_text<T, F>(self, f: F) -> Self::Mapped<T>
     where
-        T: BlockText,
+        Self::Mapped<T>: BlockTextProjection,
         F: FnOnce(Self::BlockText) -> T;
 
     fn as_block_text(&self) -> &Self::BlockText;
@@ -545,10 +545,7 @@ where
 {
     type RawText = <T as BlockText>::RawText;
     type BlockText = T;
-    type Mapped<U>
-        = U
-    where
-        U: BlockText;
+    type Mapped<U> = U;
 
     fn into_block_text(self) -> Self::BlockText {
         self
@@ -560,7 +557,7 @@ where
     //       `Self::Mapped<U>`.
     fn map_block_text<U, F>(self, f: F) -> Self::Mapped<U>
     where
-        U: BlockText,
+        Self::Mapped<U>: BlockTextProjection,
         F: FnOnce(Self::BlockText) -> U,
     {
         use std::mem;
@@ -673,7 +670,7 @@ pub(self) fn uax29_text_grapheme_indices(
 #[cfg(test)]
 mod tests {
     use crate::text::annotation::AnnotatedText;
-    use crate::text::{ContentSegment, Line, Segment, StrExt as _};
+    use crate::text::{Block, ContentBlock, ContentSegment, Line, Segment, StrExt as _};
 
     #[test]
     fn split_at_ascii_line_breaks() {
@@ -711,6 +708,14 @@ mod tests {
         assert_eq!(annotated.display().default().to_string(), "text");
         let line: Line<_> = [annotated.clone(), annotated].into_iter().collect();
         assert_eq!(line.display().default().to_string(), "texttext\n");
+        let block: Block<_> = [line.clone(), Line::empty(), line]
+            .into_iter()
+            .collect::<ContentBlock<_>>()
+            .into();
+        assert_eq!(
+            block.display().default().to_string(),
+            "texttext\n        \ntexttext\n"
+        );
     }
 
     // TODO: Assert that the ANSI style escape codes are present and correct in the rendered text.
@@ -723,19 +728,31 @@ mod tests {
         use crate::text::annotation::Annotate;
         use crate::text::{BlankText, TryFromText};
 
+        let black = Style::new().on_black();
         let red = Style::new().red();
-        let green = Style::new().green().blink();
+        let green = Style::new().green();
         let blue = Style::new().blue();
         let bold = Style::new().bold();
 
-        let line = Line::from_iter([
-            Segment::<&str>::assert("red").style(red),
-            Segment::assert(BlankText(3)).into(),
-            Segment::assert("緑色").style(green),
-            Segment::assert(BlankText(3)).into(),
-            Segment::assert("Blau").style(blue),
-        ])
-        .style(bold);
-        eprint!("{}", line.display().detected(Stream::Error));
+        let block = Block::from(ContentBlock::from_iter([
+            Line::from_iter([
+                Segment::<&str>::assert("red").style(red),
+                Segment::assert(BlankText(3)).into(),
+                Segment::assert("緑色").style(green.blink()),
+                Segment::assert(BlankText(3)).into(),
+                Segment::assert("Blau").style(blue),
+            ])
+            .style(bold),
+            Line::from_iter([
+                Segment::<&str>::assert("one").into(),
+                Segment::assert(BlankText(3)).into(),
+                Segment::assert("二").into(),
+                Segment::assert(BlankText(3)).into(),
+                Segment::assert("Drei").into(),
+            ])
+            .into(),
+        ]))
+        .style(black);
+        eprint!("{}", block.display().detected(Stream::Error));
     }
 }

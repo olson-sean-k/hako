@@ -31,14 +31,14 @@ pub trait DisplayStyle {
 #[derive(Debug)]
 pub struct DisplayProxy<'t, T, S = ()> {
     text: &'t T,
-    phantom: PhantomData<fn() -> S>,
+    _phantom: PhantomData<fn() -> S>,
 }
 
 impl<'t, T, S> DisplayProxy<'t, T, S> {
     pub(crate) fn from_text(text: &'t T) -> Self {
         DisplayProxy {
             text,
-            phantom: PhantomData,
+            _phantom: PhantomData,
         }
     }
 }

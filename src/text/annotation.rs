@@ -170,10 +170,7 @@ where
 {
     type RawText = <T as BlockText>::RawText;
     type BlockText = T;
-    type Mapped<U>
-        = AnnotatedText<U, A>
-    where
-        U: BlockText;
+    type Mapped<U> = AnnotatedText<U, A>;
 
     fn into_block_text(self) -> Self::BlockText {
         self.text
@@ -181,7 +178,7 @@ where
 
     fn map_block_text<U, F>(self, f: F) -> Self::Mapped<U>
     where
-        U: BlockText,
+        Self::Mapped<U>: BlockTextProjection,
         F: FnOnce(Self::BlockText) -> U,
     {
         self.map_text(f)

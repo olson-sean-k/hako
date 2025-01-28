@@ -4,17 +4,32 @@ use std::convert::Infallible;
 use std::fmt::{self, Debug, Formatter};
 
 use crate::cow::MoveCow;
-use crate::slice::{SliceExt as _, SliceProjection};
 use crate::text::annotation::AnnotatedText;
 use crate::text::geometry::LinearGeometry;
 use crate::text::morphology::{Grapheme, MorphemeFor, MorphemeKind};
 use crate::text::render::{DisplayProxy, DisplayStyle, Render, RenderContext};
-use crate::text::segment::{BlankSegment, ContentSegment, Segment, SegmentFor};
+use crate::text::segment::{BlankSegment, ContentSegment, Segment, SegmentComposition};
 use crate::text::style::AnsiPrefix;
 use crate::text::{
     BlankText, BlockText, BlockTextProjection, Indexed, MorphologyError, RawText, StrExt as _,
     ToStringMut, TryFromText,
 };
+
+pub trait LineComposition: BlockTextProjection<BlockText = Line<Self::Composed>> {
+    type Composed: SegmentComposition<MorphemeKind = Self::MorphemeKind>;
+    type MorphemeKind: MorphemeKind;
+}
+
+impl<T, U, M> LineComposition for T
+where
+    Line<U>: BlockText,
+    U: SegmentComposition<MorphemeKind = M>,
+    T: BlockTextProjection<BlockText = Line<U>>,
+    M: MorphemeKind,
+{
+    type Composed = U;
+    type MorphemeKind = M;
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct LineIndex {
@@ -30,9 +45,7 @@ pub struct LineIndex {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Line<T = Segment> {
     // TODO: Perhaps segments ought to be stored in a `VecDeque` instead? If prepending becomes
-    //       necessary in code written against `Line`, consider making this change. The same idea
-    //       probably applies to `Block` too: `Line`s could be pushed onto the "top" or "bottom" of
-    //       a block.
+    //       necessary in code written against `Line`, consider making this change.
     segments: Vec<T>,
 }
 
@@ -43,6 +56,36 @@ impl<T> Line<T> {
         }
     }
 
+    pub fn try_from_split_raw_text<R>(text: R) -> Result<Vec<Self>, T::Error>
+    where
+        T: TryFromText<String>,
+        R: RawText,
+    {
+        // This is not implemented via `Segment::try_from_split_raw_text` to avoid an additional
+        // allocation.
+        text.as_ref()
+            .split_at_ascii_line_breaks()
+            .map(String::from)
+            .map(|text| {
+                T::try_from_text(text)
+                    .map(|segment| vec![segment])
+                    .map(Line::from)
+            })
+            .collect()
+    }
+
+    pub fn try_from_segments<I>(segments: I) -> Result<Self, T::Error>
+    where
+        T: TryFromText<I::Item>,
+        I: IntoIterator,
+    {
+        segments
+            .into_iter()
+            .map(T::try_from_text)
+            .collect::<Result<Vec<_>, _>>()
+            .map(Line::from)
+    }
+
     pub fn appended(mut front: Self, mut back: Self) -> Self {
         front.append(&mut back);
         front
@@ -50,6 +93,10 @@ impl<T> Line<T> {
 
     pub fn append(&mut self, line: &mut Self) {
         self.segments.append(&mut line.segments);
+    }
+
+    pub fn push(&mut self, segment: impl Into<T>) {
+        self.segments.push(segment.into());
     }
 
     pub fn has_segments(&self) -> bool {
@@ -66,16 +113,15 @@ where
     }
 }
 
-impl<T, M> Line<T>
+impl<T> Line<T>
 where
-    T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>,
-    M: MorphemeKind,
+    T: SegmentComposition,
 {
-    pub fn from_raw_text_or_empty<U>(text: U) -> Self
+    pub fn from_raw_text_or_empty<R>(text: R) -> Self
     where
-        T: From<Segment<T::RawText, M>>,
-        T::RawText: TryFrom<MoveCow<String>> + TryFrom<MoveCow<U>>,
-        U: RawText,
+        T: From<T::BlockText>,
+        T::RawText: TryFrom<MoveCow<R>>,
+        R: RawText,
     {
         let segment = ContentSegment::from_raw_text_or_empty(text);
         if segment.is_empty() {
@@ -86,63 +132,20 @@ where
         }
     }
 
-    pub fn try_from_joined_raw_text<U>(text: U) -> Result<Self, MorphologyError>
+    pub fn try_from_joined_raw_text<R>(text: R) -> Result<Self, MorphologyError>
     where
-        T: From<Segment<T::RawText, M>>,
-        T::RawText: TryFrom<MoveCow<String>> + TryFrom<MoveCow<U>>,
-        U: RawText,
+        T: From<T::BlockText>,
+        T::RawText: TryFrom<MoveCow<String>> + TryFrom<MoveCow<R>>,
+        R: RawText,
     {
         ContentSegment::try_from_joined_raw_text(text)
             .map(Segment::from)
             .map(|segment| Line::from(vec![segment.into()]))
     }
 
-    pub fn try_from_split_raw_text<U>(text: U) -> Result<Vec<Self>, T::Error>
+    pub fn project_and_append_segments(self) -> Line<T::BlockText>
     where
-        T: TryFromText<String>,
-        U: RawText,
-    {
-        // This is not implemented via `Segment::try_from_split_raw_text` to avoid an additional
-        // allocation.
-        text.as_ref()
-            .split_at_ascii_line_breaks()
-            .map(String::from)
-            .map(Line::try_from_text)
-            .collect()
-    }
-
-    pub fn try_from_width(width: usize) -> Result<Self, M::Error>
-    where
-        M::Error: From<T::Error>,
-        T: TryFromText<Segment<T::RawText, M>>,
-    {
-        BlankSegment::try_from_width(width)
-            .map(Segment::from)
-            .and_then(|segment| T::try_from_text(segment).map_err(Into::into))
-            .map(|segment| Line::from(vec![segment]))
-    }
-
-    pub fn try_from_segments<I>(segments: I) -> Result<Self, T::Error>
-    where
-        T: TryFromText<I::Item>,
-        I: IntoIterator,
-    {
-        segments
-            .into_iter()
-            .map(T::try_from_text)
-            .collect::<Result<Vec<_>, _>>()
-            .map(Line::from)
-    }
-
-    pub fn push(&mut self, segment: impl Into<T>) {
-        self.segments.push(segment.into());
-    }
-
-    pub fn project_and_append_segments(
-        self,
-    ) -> Line<Segment<<T as BlockTextProjection>::RawText, M>>
-    where
-        T::RawText: From<String> + ToStringMut,
+        T::Composed: From<String> + ToStringMut,
     {
         Line {
             segments: self
@@ -155,43 +158,53 @@ where
         }
     }
 
-    pub fn get(&self, index: usize) -> Option<&SegmentFor<T, M>> {
+    pub fn get(&self, index: usize) -> Option<&T::BlockText> {
         self.segments
             .get(index)
             .map(BlockTextProjection::as_block_text)
     }
 
-    pub fn segments(&self) -> impl '_ + SliceProjection<Item = SegmentFor<T, M>> {
-        self.segments
-            .as_slice()
-            .project(BlockTextProjection::as_block_text)
+    pub fn segments(
+        &self,
+    ) -> impl '_ + Clone + DoubleEndedIterator + ExactSizeIterator + Iterator<Item = &'_ T::BlockText>
+    {
+        self.segments.iter().map(BlockTextProjection::as_block_text)
     }
 
     // Unlike `fmt` and `display`, this string is not terminated with a new line.
     pub fn to_string(&self) -> Cow<'_, str> {
-        let segments = self.segments();
-        match segments.len() {
+        match self.segments.len() {
             0 => "".into(),
-            // TODO: Why can this not be done through the slice projection...? Fix this, if
-            //       possible.
-            //1 => segments.get(0).unwrap().to_string(),
             1 => self.segments[0].as_block_text().to_string(),
-            _ => segments.iter().map(Segment::to_string).join("").into(),
+            _ => self.segments().map(Segment::to_string).join("").into(),
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.segments().iter().all(|segment| segment.is_empty())
+        self.segments().all(Segment::is_empty)
     }
 }
 
-// TODO: `into_owned` functions like these cannot detect and clone annotations. Abstract this
-//       further with an `IntoOwned` trait. Types like
-//       `Annotation<Segment<Cow<'_, str>, _>, Styler<&'_ Style>>` can implement this trait
-//       transitively over its fields, allowing both the text and style to clone.
+impl<T, M> Line<T>
+where
+    T: SegmentComposition<MorphemeKind = M>,
+    M: MorphemeKind,
+{
+    pub fn try_from_width(width: usize) -> Result<Self, M::Error>
+    where
+        T: From<T::BlockText>,
+    {
+        BlankSegment::try_from_width(width)
+            .map(Segment::from)
+            .map(|segment| vec![segment.into()])
+            .map(Line::from)
+    }
+}
+
 impl<'t, T, M> Line<T>
 where
-    T: BlockTextProjection<BlockText = Segment<Cow<'t, str>, M>>,
+    T: SegmentComposition<Composed = Cow<'t, str>, MorphemeKind = M>,
+    T::Mapped<Segment<Cow<'static, str>, M>>: BlockTextProjection,
     M: MorphemeKind,
 {
     pub fn into_owned(self) -> Line<T::Mapped<Segment<Cow<'static, str>, M>>> {
@@ -231,7 +244,7 @@ where
 
 impl<T, M> BlockText for Line<T>
 where
-    T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>,
+    T: SegmentComposition<MorphemeKind = M>,
     M: MorphemeKind,
 {
     type RawText = T::RawText;
@@ -241,7 +254,7 @@ where
         Self: 't;
     type Index = LineIndex;
 
-    fn graphemes(&self) -> impl '_ + Clone + Iterator<Item = Indexed<Self::Index, Grapheme<'_>>> {
+    fn graphemes(&self) -> impl '_ + Iterator<Item = Indexed<Self::Index, Grapheme<'_>>> {
         self.segments
             .iter()
             .map(BlockTextProjection::as_block_text)
@@ -322,7 +335,7 @@ impl<T> FromIterator<T> for Line<T> {
 
 impl<T, M> LinearGeometry for Line<T>
 where
-    T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>,
+    T: SegmentComposition<MorphemeKind = M>,
     M: MorphemeKind,
 {
     fn width(&self) -> usize {
@@ -334,8 +347,6 @@ where
     }
 }
 
-// TODO: It may be a good idea to `coalesce` styled lines to avoid unnecessary ANSI escape codes.
-//       This can't be done in the `Render` trait without a clone though.
 impl<T, S> Render<S> for Line<T>
 where
     T: Render<S>,
@@ -350,15 +361,13 @@ where
     }
 }
 
-impl<T, M, U, A> TryFromText<AnnotatedText<U, A>> for Line<AnnotatedText<T, A>>
+impl<T, X, A> TryFromText<AnnotatedText<X, A>> for Line<AnnotatedText<T, A>>
 where
-    T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>
-        + TryFromText<U>,
-    M: MorphemeKind,
+    T: TryFromText<X>,
 {
     type Error = T::Error;
 
-    fn try_from_text(annotated: AnnotatedText<U, A>) -> Result<Self, Self::Error> {
+    fn try_from_text(annotated: AnnotatedText<X, A>) -> Result<Self, Self::Error> {
         annotated
             .map_text(T::try_from_text)
             .transpose()
@@ -366,11 +375,9 @@ where
     }
 }
 
-impl<T, M> TryFromText<BlankText> for Line<T>
+impl<T> TryFromText<BlankText> for Line<T>
 where
-    T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>
-        + TryFromText<BlankText>,
-    M: MorphemeKind,
+    T: TryFromText<BlankText>,
 {
     type Error = T::Error;
 
@@ -387,16 +394,14 @@ impl<T> TryFromText<Line<T>> for Line<T> {
     }
 }
 
-impl<T, M, U> TryFromText<U> for Line<T>
+impl<T, X> TryFromText<X> for Line<T>
 where
-    T: BlockTextProjection<BlockText = Segment<<T as BlockTextProjection>::RawText, M>>
-        + TryFromText<U>,
-    M: MorphemeKind,
-    U: RawText,
+    T: TryFromText<X>,
+    X: RawText,
 {
     type Error = T::Error;
 
-    fn try_from_text(text: U) -> Result<Self, Self::Error> {
+    fn try_from_text(text: X) -> Result<Self, Self::Error> {
         T::try_from_text(text).map(|segment| Line::from(vec![segment]))
     }
 }
