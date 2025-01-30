@@ -143,10 +143,17 @@ pub trait MorphemeKind: 'static + Congruence {
     fn blanks_in_width<'t>(
         width: usize,
     ) -> impl Clone + Iterator<Item = Indexed<usize, Self::Morpheme<'t>>> {
+        let blank = Self::min_width_blank();
+        let bytes = blank.as_ref().len();
         iter::repeat(Self::min_width_blank())
             .enumerate()
             .take(width / Self::MIN_WIDTH)
-            .map(|(index, text)| Indexed { index, text })
+            .map(move |(index, text)| Indexed {
+                index: index
+                    .checked_mul(bytes)
+                    .expect("overflow determining index of morpheme"),
+                text,
+            })
     }
 }
 
