@@ -4,7 +4,7 @@ use std::fmt::{self, Display, Formatter, Write};
 use crate::env::StyleEncoding;
 use crate::text::annotation::AnnotatedText;
 use crate::text::morphology::{FlexKind, Grapheme};
-use crate::text::render::{FmtWith, Monitor};
+use crate::text::render::{FmtFn, Monitor};
 use crate::text::{Line, Segment};
 
 const ANSI_RESET_ESCAPE_SEQUENCE: &str = "\u{1b}[0m";
@@ -18,7 +18,7 @@ pub trait AnsiPrefix {
     fn fmt(&self, formatter: &mut Formatter) -> fmt::Result;
 
     fn display(&self) -> impl '_ + Display {
-        FmtWith(|formatter| self.fmt(formatter))
+        FmtFn::from(|formatter| self.fmt(formatter))
     }
 
     // TODO: Unfortunately, it seems that no ANSI styling crates provide this information. For now,
@@ -110,7 +110,7 @@ impl AnsiSuffix {
     }
 
     pub fn display() -> impl 'static + Display {
-        FmtWith(|formatter| AnsiSuffix::fmt(formatter))
+        FmtFn::from(|formatter| AnsiSuffix::fmt(formatter))
     }
 }
 

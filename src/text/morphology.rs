@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::convert::Infallible;
 use std::fmt::Debug;
+use std::iter;
 use std::num::NonZeroUsize;
 
 use crate::env::TextEncoding;
@@ -137,7 +138,16 @@ pub trait MorphemeKind: 'static + Congruence {
 
     const MIN_WIDTH: NonZeroUsize;
 
-    fn min_width_blank<'t>() -> MorphemeFor<'t, Self>;
+    fn min_width_blank<'t>() -> Self::Morpheme<'t>;
+
+    fn blanks_in_width<'t>(
+        width: usize,
+    ) -> impl Clone + Iterator<Item = Indexed<usize, Self::Morpheme<'t>>> {
+        iter::repeat(Self::min_width_blank())
+            .enumerate()
+            .take(width / Self::MIN_WIDTH)
+            .map(|(index, text)| Indexed { index, text })
+    }
 }
 
 #[derive(Debug)]
@@ -158,7 +168,7 @@ impl MorphemeKind for FlexKind {
     const MIN_WIDTH: NonZeroUsize = Narrow::WIDTH;
 
     #[inline(always)]
-    fn min_width_blank<'t>() -> MorphemeFor<'t, Self> {
+    fn min_width_blank<'t>() -> Self::Morpheme<'t> {
         Flex::Narrow(Narrow::blank())
     }
 }
@@ -181,7 +191,7 @@ impl MorphemeKind for NarrowKind {
     const MIN_WIDTH: NonZeroUsize = Narrow::WIDTH;
 
     #[inline(always)]
-    fn min_width_blank<'t>() -> MorphemeFor<'t, Self> {
+    fn min_width_blank<'t>() -> Self::Morpheme<'t> {
         Narrow::blank()
     }
 }
@@ -208,7 +218,7 @@ impl MorphemeKind for WideKind {
     const MIN_WIDTH: NonZeroUsize = Wide::WIDTH;
 
     #[inline(always)]
-    fn min_width_blank<'t>() -> MorphemeFor<'t, Self> {
+    fn min_width_blank<'t>() -> Self::Morpheme<'t> {
         Wide::blank()
     }
 }

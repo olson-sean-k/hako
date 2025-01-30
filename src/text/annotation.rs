@@ -255,12 +255,7 @@ where
 {
     fn fmt(&self, formatter: &mut Formatter, context: &mut RenderContext<S>) -> fmt::Result {
         context.push_node_and_fmt(formatter, || {
-            (
-                &self.text,
-                RenderNode {
-                    style: self.annotation.clone(),
-                },
-            )
+            (RenderNode::Style(self.annotation.clone()), &self.text)
         })
     }
 }

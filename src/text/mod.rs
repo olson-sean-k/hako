@@ -11,12 +11,13 @@ pub mod render;
 pub mod style;
 
 use ascii::AsciiChar;
+use geometry::LinearGeometry;
 use itertools::Itertools;
 use std::borrow::Cow;
 use std::convert::Infallible;
 use std::fmt::Debug;
 use std::iter;
-use std::ops::{Bound, Range, RangeBounds};
+use std::ops::{Bound, Deref, Range, RangeBounds};
 use std::slice::SliceIndex;
 
 use crate::cow::{IntoWritten, MoveCow};
@@ -101,6 +102,19 @@ pub trait IteratorExt: Iterator {
                         .into(),
                 )
             }
+        })
+    }
+
+    fn margins(self, width: usize) -> impl Iterator<Item = (usize, Self::Item)>
+    where
+        Self: Sized,
+        Self::Item: Deref,
+        <Self::Item as Deref>::Target: BlockTextProjection,
+        <<Self::Item as Deref>::Target as BlockTextProjection>::BlockText: LinearGeometry,
+    {
+        self.map(move |linear| {
+            let margin = width.saturating_sub(linear.deref().as_block_text().width());
+            (margin, linear)
         })
     }
 }
@@ -365,6 +379,8 @@ where
     }
 }
 
+// TODO: For input type parameters that have a bound on `RawText`, consistently use the name `R`
+//       (instead of more typical and general names like `T` and `U`).
 pub trait RawText: AsRef<str> + IntoWritten + Strip {
     const EMPTY: Self;
 }
@@ -744,7 +760,7 @@ mod tests {
             ])
             .style(bold),
             Line::from_iter([
-                Segment::<&str>::assert("one").into(),
+                Segment::assert("one").into(),
                 Segment::assert(BlankText(3)).into(),
                 Segment::assert("二").into(),
                 Segment::assert(BlankText(3)).into(),

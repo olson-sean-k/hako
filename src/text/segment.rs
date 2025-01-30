@@ -2,8 +2,7 @@ use derive_where::derive_where;
 use itertools::Itertools;
 use std::borrow::Cow;
 use std::convert::Infallible;
-use std::fmt::{self, Formatter};
-use std::iter;
+use std::fmt::{self, Debug, Formatter};
 use std::marker::PhantomData;
 use std::mem;
 
@@ -311,6 +310,13 @@ where
         BlankSegment::from_width_unchecked(BlankText::from_min_width_morpheme_count::<M>(n).into())
     }
 
+    pub fn assert(width: usize) -> Self
+    where
+        M::Error: Debug,
+    {
+        BlankSegment::try_from_width(width).expect("incongruent width for morpheme kind")
+    }
+
     pub fn try_from_width(width: usize) -> Result<Self, M::Error> {
         M::congruence(width).map(BlankSegment::from_width_unchecked)
     }
@@ -373,10 +379,7 @@ where
     }
 
     fn morphemes(&self) -> impl '_ + Iterator<Item = Indexed<Self::Index, Self::Morpheme<'_>>> {
-        iter::repeat(M::min_width_blank())
-            .enumerate()
-            .take(self.width / M::MIN_WIDTH)
-            .map(move |(index, text)| Indexed { index, text })
+        M::blanks_in_width(self.width)
     }
 }
 
@@ -403,7 +406,7 @@ where
     S: AnsiPrefix,
 {
     fn fmt(&self, formatter: &mut Formatter, context: &mut RenderContext<S>) -> fmt::Result {
-        context.fmt_with_ansi_fence(
+        context.fmt_leaf_text(
             Self::encoding(),
             formatter,
             self.graphemes().map(Indexed::into_text),
@@ -679,7 +682,7 @@ where
     S: AnsiPrefix,
 {
     fn fmt(&self, formatter: &mut Formatter, context: &mut RenderContext<S>) -> fmt::Result {
-        context.fmt_with_ansi_fence(
+        context.fmt_leaf_text(
             self.encoding(),
             formatter,
             self.graphemes().map(Indexed::into_text),

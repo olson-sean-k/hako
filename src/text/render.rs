@@ -24,6 +24,29 @@ where
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RenderFn<F>(F);
+
+impl<F> RenderFn<F> {
+    pub fn from<S>(f: F) -> Self
+    where
+        // This bound is necessary for the `Render` implementation. Without it, the type parameter
+        // `F` in that implementation is not general enough.
+        F: Fn(&mut Formatter, &mut RenderContext<S>) -> fmt::Result,
+    {
+        RenderFn(f)
+    }
+}
+
+impl<F, S> Render<S> for RenderFn<F>
+where
+    F: Fn(&mut Formatter, &mut RenderContext<S>) -> fmt::Result,
+{
+    fn fmt(&self, formatter: &mut Formatter, context: &mut RenderContext<S>) -> fmt::Result {
+        (self.0)(formatter, context)
+    }
+}
+
 pub trait DisplayStyle {
     type Style: AnsiPrefix;
 }
@@ -61,7 +84,7 @@ where
     }
 
     pub fn with(self, context: RenderContext<S>) -> impl 't + Display {
-        FmtWith(move |formatter| {
+        FmtFn::from(move |formatter| {
             let mut context = context.clone();
             self.text.fmt(formatter, &mut context)
         })
@@ -69,11 +92,20 @@ where
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct FmtWith<F>(pub F)
-where
-    F: Fn(&mut Formatter<'_>) -> fmt::Result;
+pub(crate) struct FmtFn<F>(F);
 
-impl<F> Debug for FmtWith<F>
+impl<F> FmtFn<F> {
+    pub fn from(f: F) -> Self
+    where
+        // This bound is necessary for the `Debug` and `Display` implementations. Without it, the
+        // type parameter `F` in the those implementations is not general enough.
+        F: Fn(&mut Formatter<'_>) -> fmt::Result,
+    {
+        FmtFn(f)
+    }
+}
+
+impl<F> Debug for FmtFn<F>
 where
     F: Fn(&mut Formatter<'_>) -> fmt::Result,
 {
@@ -82,7 +114,7 @@ where
     }
 }
 
-impl<F> Display for FmtWith<F>
+impl<F> Display for FmtFn<F>
 where
     F: Fn(&mut Formatter<'_>) -> fmt::Result,
 {
@@ -143,8 +175,24 @@ where
 //       Ultimately, a `Reborrow<Target = S>` trait is likely the best way to ensure that a direct
 //       reference is always stored.
 #[derive(Clone, Debug, PartialEq)]
-pub struct RenderNode<S> {
-    pub style: Style<S>,
+pub enum RenderNode<S> {
+    BlockWidth(usize),
+    Style(Style<S>),
+}
+
+impl<S> RenderNode<S> {
+    pub fn as_block_width(&self) -> Option<&usize> {
+        match self {
+            RenderNode::BlockWidth(ref width) => Some(width),
+            _ => None,
+        }
+    }
+    pub fn as_style(&self) -> Option<&Style<S>> {
+        match self {
+            RenderNode::Style(ref style) => Some(style),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -158,9 +206,9 @@ impl<S> RenderContext<S> {
     pub fn push_node_and_fmt<T, F>(&mut self, formatter: &mut Formatter, f: F) -> fmt::Result
     where
         T: Render<S>,
-        F: FnOnce() -> (T, RenderNode<S>),
+        F: FnOnce() -> (RenderNode<S>, T),
     {
-        let (text, node) = f();
+        let (node, text) = f();
         self.nodes.push(node);
         let result = text.fmt(formatter, self);
         self.nodes.pop().unwrap();
@@ -176,8 +224,8 @@ impl<S> RenderContext<S>
 where
     S: AnsiPrefix,
 {
-    pub fn fmt_with_ansi_fence<'t>(
-        &self,
+    pub fn fmt_leaf_text<'t>(
+        &'t self,
         encoding: TextEncoding,
         formatter: &mut Formatter,
         text: impl IntoIterator<Item = Grapheme<'t>>,
@@ -185,7 +233,7 @@ where
         let styles = self
             .nodes()
             .iter()
-            .map(|node| &node.style)
+            .filter_map(RenderNode::as_style)
             .filter(|style| style.as_ref().encoding().is_in(&self.encoding.style));
         if encoding.is_in(&self.encoding.text) {
             Style::fmt_with_ansi_fence(styles, formatter, text)

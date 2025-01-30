@@ -7,14 +7,17 @@ use std::marker::PhantomData;
 
 use crate::text::annotation::AnnotatedText;
 use crate::text::geometry::{BlockGeometry, BoundingBox, LinearGeometry};
-use crate::text::line::{Line, LineComposition};
+use crate::text::line::{Line, LineComposition, LineIndex};
 use crate::text::modal::ModalText;
 use crate::text::morphology::{Grapheme, MorphemeFor, MorphemeKind};
-use crate::text::render::{DisplayProxy, DisplayStyle, Render, RenderContext};
+use crate::text::render::{
+    DisplayProxy, DisplayStyle, Render, RenderContext, RenderFn, RenderNode,
+};
 use crate::text::segment::{BlankSegment, Segment, SegmentComposition};
 use crate::text::style::AnsiPrefix;
 use crate::text::{
-    BlankText, BlockText, BlockTextProjection, Indexed, RawText, StrExt as _, TryFromText,
+    BlankText, BlockText, BlockTextProjection, Indexed, IteratorExt as _, RawText, StrExt as _,
+    TryFromText,
 };
 
 use ModalText::{Blank, Content};
@@ -37,6 +40,9 @@ where
     type MorphemeKind = M;
 }
 
+// TODO: Index types can only be used with their corresponding block text type, because some
+//       outputs are "synthesized" and don't refer to an existing index in composed block text.
+//       These type should probably be entirely opaque (i.e., no exported fields nor accessors).
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct BlockIndex {
     pub line: usize,
@@ -112,6 +118,7 @@ impl<T, M, S> Render<S> for Block<T>
 where
     T: LineComposition<MorphemeKind = M> + Render<S>,
     M: MorphemeKind,
+    M::Error: Debug,
     S: AnsiPrefix,
 {
     fn fmt(&self, formatter: &mut Formatter, context: &mut RenderContext<S>) -> fmt::Result {
@@ -180,28 +187,35 @@ where
     }
 
     fn morphemes(&self) -> impl '_ + Iterator<Item = Indexed<Self::Index, Self::Morpheme<'_>>> {
-        iter::repeat(iter::repeat(M::min_width_blank()).enumerate())
-            .take(self.width / M::MIN_WIDTH)
+        iter::repeat(M::blanks_in_width(self.width))
             .enumerate()
             .take(self.height)
             .flat_map(move |(index, line)| {
-                line.enumerate()
-                    .map(move |(byte, (segment, text))| Indexed {
+                line.enumerate().map(
+                    move |(
+                        byte,
+                        Indexed {
+                            index: segment,
+                            text,
+                        },
+                    )| Indexed {
                         index: BlockIndex {
                             line: index,
                             segment,
                             byte,
                         },
                         text,
-                    })
+                    },
+                )
             })
     }
 }
 
 impl<T, M, S> Render<S> for BlankBlock<T>
 where
-    T: LineComposition<MorphemeKind = M>,
+    T: LineComposition<MorphemeKind = M> + Render<S>,
     M: MorphemeKind,
+    M::Error: Debug,
     S: AnsiPrefix,
 {
     fn fmt(&self, formatter: &mut Formatter, context: &mut RenderContext<S>) -> fmt::Result {
@@ -222,14 +236,16 @@ where
 //       replacing `&mut self` receivers with `self`.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ContentBlock<T = Line> {
-    // TODO: Perhaps lines ought to be stored in a `VecDeque` instead? If prepending becomes
-    //       necessary in code written against `ContentBlock`, consider making this change.
     lines: Vec<T>,
 }
 
 impl<T> ContentBlock<T> {
     pub const fn empty() -> Self {
         ContentBlock { lines: Vec::new() }
+    }
+
+    pub fn push(&mut self, line: impl Into<T>) {
+        self.lines.push(line.into());
     }
 
     pub fn has_lines(&self) -> bool {
@@ -240,31 +256,6 @@ impl<T> ContentBlock<T> {
 impl<T> ContentBlock<T>
 where
     T: LineComposition,
-{
-    pub fn get(&self, index: usize) -> Option<&Line<T::Composed>> {
-        self.lines
-            .get(index)
-            .map(BlockTextProjection::as_block_text)
-    }
-
-    pub fn lines(
-        &self,
-    ) -> impl '_ + Clone + DoubleEndedIterator + ExactSizeIterator + Iterator<Item = &'_ Line<T::Composed>>
-    {
-        self.lines.iter().map(BlockTextProjection::as_block_text)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.lines().all(Line::is_empty)
-    }
-}
-
-impl<T, U, M> ContentBlock<T>
-where
-    T: LineComposition<Composed = U, MorphemeKind = M>,
-    U: From<Segment<T::RawText, M>> + SegmentComposition<MorphemeKind = M>,
-    M: MorphemeKind,
-    M::Error: Debug,
 {
     pub fn try_from_lines<I>(lines: I) -> Result<Self, T::Error>
     where
@@ -296,31 +287,21 @@ where
             .map(ContentBlock::from)
     }
 
-    #[inline(always)]
-    pub fn push(&mut self, line: impl Into<T>) {
-        self.push_and_pad(line);
+    pub fn get(&self, index: usize) -> Option<&Line<T::Composed>> {
+        self.lines
+            .get(index)
+            .map(BlockTextProjection::as_block_text)
     }
 
-    fn push_and_pad(&mut self, line: impl Into<T>) {
-        self.lines.push(line.into());
-        self.pad();
+    pub fn lines(
+        &self,
+    ) -> impl '_ + Clone + DoubleEndedIterator + ExactSizeIterator + Iterator<Item = &'_ Line<T::Composed>>
+    {
+        self.lines.iter().map(BlockTextProjection::as_block_text)
     }
 
-    fn pad(&mut self) {
-        let width = self.ascii_line_break_bounds().width;
-        for line in self.lines.iter_mut() {
-            ContentBlock::push_padding_segment(line, width);
-        }
-    }
-
-    fn push_padding_segment(line: &mut T, width: usize) {
-        let line = line.as_block_text_mut();
-        let margin = width.checked_sub(line.width()).expect("");
-        if margin > 0 {
-            line.push(Segment::from(
-                BlankSegment::try_from_width(margin).expect(""),
-            ));
-        }
+    pub fn is_empty(&self) -> bool {
+        self.lines().all(Line::is_empty)
     }
 }
 
@@ -373,15 +354,40 @@ where
     type Index = BlockIndex;
 
     fn graphemes(&self) -> impl '_ + Iterator<Item = Indexed<Self::Index, Grapheme<'_>>> {
-        self.lines().enumerate().flat_map(|(index, line)| {
-            line.graphemes().map(move |grapheme| {
-                grapheme.map_index(|line| BlockIndex {
-                    line: index,
-                    segment: line.segment,
-                    byte: line.byte,
-                })
+        let width = self.ascii_line_break_bounds().width;
+        self.lines()
+            .margins(width)
+            .enumerate()
+            .flat_map(|(index, (margin, line))| {
+                // An empty segment may need to be synthesized to pad the line. Stash its index,
+                // which is the length of the buffer of segments in the line. See below.
+                let segment = line.segments().len();
+                line.graphemes()
+                    .map(move |grapheme| {
+                        grapheme.map_index(|LineIndex { segment, byte }| BlockIndex {
+                            line: index,
+                            segment,
+                            byte,
+                        })
+                    })
+                    .chain(
+                        // TODO: Unlike the `Render` implementation, which constructs a
+                        //       `BlankSegment`, this does not assert that morphemes can represent
+                        //       this width exactly. These implementations should probably do the
+                        //       same thing in this regard (trust that the margin is correct or
+                        //       check it and panic).
+                        // Pad the line to the width of the block.
+                        M::blanks_in_width(margin)
+                            .map(|morpheme| morpheme.map_text(Into::into))
+                            .map(move |grapheme| {
+                                grapheme.map_index(|byte| BlockIndex {
+                                    line: index,
+                                    segment, // Synthesized segment index. See above.
+                                    byte,
+                                })
+                            }),
+                    )
             })
-        })
     }
 }
 
@@ -400,42 +406,24 @@ where
     type Style = T::Style;
 }
 
-impl<T, U, M> Extend<T> for ContentBlock<T>
-where
-    T: LineComposition<Composed = U, MorphemeKind = M>,
-    U: From<Segment<T::RawText, M>> + SegmentComposition<MorphemeKind = M>,
-    M: MorphemeKind,
-    M::Error: Debug,
-{
+impl<T> Extend<T> for ContentBlock<T> {
     fn extend<I>(&mut self, lines: I)
     where
         I: IntoIterator<Item = T>,
     {
         self.lines.extend(lines);
-        self.pad();
     }
 }
 
-impl<T> From<Line<T>> for ContentBlock<Line<T>>
-where
-    Self: From<Vec<Line<T>>>,
-{
+impl<T> From<Line<T>> for ContentBlock<Line<T>> {
     fn from(line: Line<T>) -> Self {
         ContentBlock::from_iter([line])
     }
 }
 
-impl<T, U, M> From<Vec<T>> for ContentBlock<T>
-where
-    T: LineComposition<Composed = U, MorphemeKind = M>,
-    U: From<Segment<T::RawText, M>> + SegmentComposition<MorphemeKind = M>,
-    M: MorphemeKind,
-    M::Error: Debug,
-{
+impl<T> From<Vec<T>> for ContentBlock<T> {
     fn from(lines: Vec<T>) -> Self {
-        let mut block = ContentBlock { lines };
-        block.pad();
-        block
+        ContentBlock { lines }
     }
 }
 
@@ -451,27 +439,36 @@ where
     }
 }
 
-impl<T, S> Render<S> for ContentBlock<T>
+impl<T, M, S> Render<S> for ContentBlock<T>
 where
-    T: Render<S>,
+    T: LineComposition<MorphemeKind = M> + Render<S>,
+    M: MorphemeKind,
     S: AnsiPrefix,
 {
     fn fmt(&self, formatter: &mut Formatter, context: &mut RenderContext<S>) -> fmt::Result {
-        for line in &self.lines {
-            line.fmt(formatter, context)?;
-        }
-        Ok(())
+        let width = self.ascii_line_break_bounds().width;
+        context.push_node_and_fmt(formatter, || {
+            (
+                RenderNode::BlockWidth(width),
+                RenderFn::from(|formatter, context| {
+                    for line in &self.lines {
+                        line.fmt(formatter, context)?;
+                    }
+                    Ok(())
+                }),
+            )
+        })
     }
 }
 
-impl<T, X, A> TryFromText<AnnotatedText<X, A>> for ContentBlock<AnnotatedText<T, A>>
+impl<T, U, A> TryFromText<AnnotatedText<U, A>> for ContentBlock<AnnotatedText<T, A>>
 where
     Self: From<Vec<AnnotatedText<T, A>>>,
-    T: TryFromText<X>,
+    T: TryFromText<U>,
 {
     type Error = T::Error;
 
-    fn try_from_text(annotated: AnnotatedText<X, A>) -> Result<Self, Self::Error> {
+    fn try_from_text(annotated: AnnotatedText<U, A>) -> Result<Self, Self::Error> {
         annotated
             .map_text(T::try_from_text)
             .transpose()

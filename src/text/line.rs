@@ -15,6 +15,8 @@ use crate::text::{
     ToStringMut, TryFromText,
 };
 
+use super::render::RenderNode;
+
 pub trait LineComposition: BlockTextProjection<BlockText = Line<Self::Composed>> {
     type Composed: SegmentComposition<MorphemeKind = Self::MorphemeKind>;
     type MorphemeKind: MorphemeKind;
@@ -347,27 +349,44 @@ where
     }
 }
 
-impl<T, S> Render<S> for Line<T>
+impl<T, M, S> Render<S> for Line<T>
 where
-    T: Render<S>,
+    T: Render<S> + SegmentComposition<MorphemeKind = M>,
+    M: MorphemeKind,
+    M::Error: Debug,
     S: AnsiPrefix,
 {
     fn fmt(&self, formatter: &mut Formatter, context: &mut RenderContext<S>) -> fmt::Result {
         for segment in &self.segments {
             segment.fmt(formatter, context)?;
         }
+        if let Some(width) = context
+            .nodes()
+            .iter()
+            .filter_map(RenderNode::as_block_width)
+            .copied()
+            .last()
+        {
+            if let Some(margin) = width.checked_sub(self.width()) {
+                Render::<S>::fmt(
+                    &BlankSegment::<T::RawText, M>::assert(margin),
+                    formatter,
+                    context,
+                )?;
+            }
+        }
         writeln!(formatter)?;
         Ok(())
     }
 }
 
-impl<T, X, A> TryFromText<AnnotatedText<X, A>> for Line<AnnotatedText<T, A>>
+impl<T, U, A> TryFromText<AnnotatedText<U, A>> for Line<AnnotatedText<T, A>>
 where
-    T: TryFromText<X>,
+    T: TryFromText<U>,
 {
     type Error = T::Error;
 
-    fn try_from_text(annotated: AnnotatedText<X, A>) -> Result<Self, Self::Error> {
+    fn try_from_text(annotated: AnnotatedText<U, A>) -> Result<Self, Self::Error> {
         annotated
             .map_text(T::try_from_text)
             .transpose()
@@ -394,14 +413,14 @@ impl<T> TryFromText<Line<T>> for Line<T> {
     }
 }
 
-impl<T, X> TryFromText<X> for Line<T>
+impl<T, U> TryFromText<U> for Line<T>
 where
-    T: TryFromText<X>,
-    X: RawText,
+    T: TryFromText<U>,
+    U: RawText,
 {
     type Error = T::Error;
 
-    fn try_from_text(text: X) -> Result<Self, Self::Error> {
+    fn try_from_text(text: U) -> Result<Self, Self::Error> {
         T::try_from_text(text).map(|segment| Line::from(vec![segment]))
     }
 }
